@@ -38,11 +38,14 @@ def save_transformed_image(
     exif_bytes: Optional[bytes] = None,
     quality: int = 95,
 ) -> Path:
+    # RGBA 이미지는 투명도 보존을 위해 PNG로 저장
+    if img.mode == "RGBA":
+        stem = Path(original_name).stem
+        original_name = f"{stem}.png"
+
     output_path = get_unique_filename(output_dir, original_name)
 
-    if img.mode == "RGBA" and output_path.suffix.lower() in [".jpg", ".jpeg"]:
-        img = img.convert("RGB")
-
+    # PNG는 EXIF를 지원하지 않으므로 JPEG만 EXIF 저장
     if exif_bytes and output_path.suffix.lower() in [".jpg", ".jpeg"]:
         save_with_exif(img, str(output_path), exif_bytes, quality)
     else:
