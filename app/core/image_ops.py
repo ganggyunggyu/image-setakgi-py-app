@@ -1,6 +1,6 @@
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
-from typing import Optional
+from typing import Optional, List, Tuple
 import io
 
 
@@ -82,13 +82,16 @@ def apply_transforms(
     contrast: int = 0,
     saturation: int = 0,
     noise: int = 0,
+    perspective_corners: Optional[List[Tuple[float, float]]] = None,
 ) -> Image.Image:
     result = img.copy()
 
-    if img.mode == "RGBA":
+    if result.mode not in ("RGB", "RGBA"):
         result = result.convert("RGB")
 
-    if width or height:
+    if perspective_corners and len(perspective_corners) == 4:
+        result = perspective_transform(result, perspective_corners)
+    elif width or height:
         result = resize_image(result, width, height, keep_ratio)
 
     if rotation != 0:
@@ -106,6 +109,69 @@ def apply_transforms(
     if noise > 0:
         result = add_noise(result, noise)
 
+    return result
+
+
+def find_perspective_coeffs(
+    source_coords: List[Tuple[float, float]],
+    target_coords: List[Tuple[float, float]]
+) -> Tuple:
+    matrix = []
+    for s, t in zip(source_coords, target_coords):
+        matrix.append([t[0], t[1], 1, 0, 0, 0, -s[0]*t[0], -s[0]*t[1]])
+        matrix.append([0, 0, 0, t[0], t[1], 1, -s[1]*t[0], -s[1]*t[1]])
+
+    A = np.matrix(matrix, dtype=np.float32)
+    B = np.array(source_coords).reshape(8)
+
+    res = np.dot(np.linalg.inv(A.T * A) * A.T, B)
+    return tuple(np.array(res).reshape(8))
+
+
+def perspective_transform(
+    img: Image.Image,
+    corners: List[Tuple[float, float]]
+) -> Image.Image:
+    if len(corners) != 4:
+        return img.copy()
+
+    orig_w, orig_h = img.size
+
+    # 원근 변형은 항상 RGBA로 처리 (투명 배경 보존)
+    if img.mode != "RGBA":
+        img = img.convert("RGBA")
+
+    source_corners = [
+        (0, 0),
+        (orig_w, 0),
+        (orig_w, orig_h),
+        (0, orig_h)
+    ]
+
+    xs = [c[0] for c in corners]
+    ys = [c[1] for c in corners]
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+
+    output_w = int(max_x - min_x)
+    output_h = int(max_y - min_y)
+
+    if output_w <= 0 or output_h <= 0:
+        return img.copy()
+
+    adjusted_corners = [(x - min_x, y - min_y) for x, y in corners]
+
+    coeffs = find_perspective_coeffs(source_corners, adjusted_corners)
+
+    result = img.transform(
+        (output_w, output_h),
+        Image.Transform.PERSPECTIVE,
+        coeffs,
+        Image.Resampling.BICUBIC,
+        fillcolor=(255, 255, 255, 0)
+    )
+
+    # 원근 변형 결과는 항상 RGBA로 반환 (PNG로 저장하여 투명도 보존)
     return result
 
 

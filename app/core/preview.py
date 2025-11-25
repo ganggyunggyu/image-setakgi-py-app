@@ -65,6 +65,8 @@ class PreviewWorker(QObject):
                 preview_w = None
                 preview_h = None
 
+            perspective_corners = self._options.get("perspective_corners")
+
             result = apply_transforms(
                 self._img,
                 width=preview_w,
@@ -75,6 +77,7 @@ class PreviewWorker(QObject):
                 contrast=self._options.get("contrast", 0),
                 saturation=self._options.get("saturation", 0),
                 noise=self._options.get("noise", 0),
+                perspective_corners=perspective_corners,
             )
 
             pixmap = pil_to_qpixmap(result)
