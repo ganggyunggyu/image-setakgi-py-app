@@ -21,7 +21,7 @@ from typing import Optional
 
 from .preview_widget import PreviewWidget
 from .options_panel import OptionsPanel
-from app.core.preview import PreviewThread, pil_to_qpixmap, create_thumbnail
+from app.core.preview import PreviewThread, pil_to_qpixmap, create_thumbnail, MAX_PREVIEW_SIZE
 from app.core.image_ops import apply_transforms
 from app.core.metadata import (
     read_exif,
@@ -57,6 +57,20 @@ class TransformWorker(QRunnable):
         try:
             img = Image.open(self.filepath)
 
+            perspective_corners = None
+            if self.options.get("perspective_corners"):
+                thumbnail = create_thumbnail(img, MAX_PREVIEW_SIZE)
+                thumb_w, thumb_h = thumbnail.size
+                orig_w, orig_h = img.size
+
+                scale_x = orig_w / thumb_w
+                scale_y = orig_h / thumb_h
+
+                preview_corners = self.options.get("perspective_corners")
+                perspective_corners = [
+                    (x * scale_x, y * scale_y) for x, y in preview_corners
+                ]
+
             result = apply_transforms(
                 img,
                 width=self.options.get("width"),
@@ -67,6 +81,7 @@ class TransformWorker(QRunnable):
                 contrast=self.options.get("contrast", 0),
                 saturation=self.options.get("saturation", 0),
                 noise=self.options.get("noise", 0),
+                perspective_corners=perspective_corners,
             )
 
             exif_opts = self.options.get("exif", {})
@@ -153,10 +168,14 @@ class MainWindow(QMainWindow):
         self._preview_thread: Optional[PreviewThread] = None
 
         self._config = load_config()
+        self._perspective_corners: Optional[list] = None
 
         self._setup_ui()
         self._connect_signals()
         self._apply_styles()
+
+        # 자유변형 모드 초기화 (신호 연결 후 활성화)
+        self._preview.set_free_transform_mode(True)
 
     def _setup_ui(self):
         central = QWidget()
@@ -223,7 +242,7 @@ class MainWindow(QMainWindow):
 
         splitter.addWidget(right_panel)
 
-        splitter.setSizes([250, 500, 350])
+        splitter.setSizes([180, 520, 400])
 
         main_layout.addWidget(splitter)
 
@@ -236,7 +255,9 @@ class MainWindow(QMainWindow):
         self._clear_btn.clicked.connect(self._clear_files)
 
         self._options.options_changed.connect(self._on_options_changed)
+        self._options.free_transform_toggled.connect(self._on_free_transform_toggle)
         self._preview.size_changed.connect(self._on_preview_size_changed)
+        self._preview.perspective_changed.connect(self._on_perspective_changed)
 
         self._output_btn.clicked.connect(self._select_output_folder)
         self._convert_btn.clicked.connect(self._start_conversion)
@@ -381,7 +402,12 @@ class MainWindow(QMainWindow):
 
         self._preview_thread = PreviewThread(self)
         self._preview_thread.set_source(self._current_image)
-        self._preview_thread.set_options(self._options.get_options())
+
+        options = self._options.get_options()
+        if self._perspective_corners:
+            options["perspective_corners"] = self._perspective_corners
+
+        self._preview_thread.set_options(options)
         self._preview_thread.preview_ready.connect(self._on_preview_ready)
         self._preview_thread.preview_error.connect(self._on_preview_error)
         self._preview_thread.start()
@@ -395,6 +421,16 @@ class MainWindow(QMainWindow):
         self._status_label.setText(f"미리보기 오류: {error}")
 
     def _on_options_changed(self, options: dict):
+        self._update_preview()
+
+    def _on_free_transform_toggle(self, enabled: bool):
+        self._preview.set_free_transform_mode(enabled)
+        if not enabled:
+            self._perspective_corners = None
+        self._update_preview()
+
+    def _on_perspective_changed(self, corners: list):
+        self._perspective_corners = corners
         self._update_preview()
 
     def _on_preview_size_changed(self, width: int, height: int):
@@ -431,6 +467,9 @@ class MainWindow(QMainWindow):
 
         output_manager = OutputManager(output_dir)
         options = self._options.get_options()
+
+        if self._perspective_corners:
+            options["perspective_corners"] = self._perspective_corners
 
         for filepath in self._files:
             worker = TransformWorker(filepath, options, output_manager)

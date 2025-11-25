@@ -3,12 +3,13 @@ from PySide6.QtWidgets import (
     QGraphicsScene,
     QGraphicsPixmapItem,
     QGraphicsRectItem,
+    QGraphicsPathItem,
     QWidget,
     QVBoxLayout,
     QLabel,
 )
 from PySide6.QtCore import Qt, Signal, QRectF, QPointF
-from PySide6.QtGui import QPixmap, QPen, QBrush, QColor, QCursor, QPainter
+from PySide6.QtGui import QPixmap, QPen, QBrush, QColor, QCursor, QPainter, QPainterPath
 
 HANDLE_SIZE = 10
 
@@ -48,6 +49,7 @@ class PreviewGraphicsView(QGraphicsView):
     size_changed = Signal(int, int)
     transform_started = Signal()
     transform_ended = Signal()
+    perspective_changed = Signal(list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -77,12 +79,30 @@ class PreviewGraphicsView(QGraphicsView):
         self._current_width = 0
         self._current_height = 0
 
+        self._free_transform_mode = False
+        self._corner_positions: dict[str, QPointF] = {}
+
     def set_keep_ratio(self, keep: bool):
         self._keep_ratio = keep
+
+    def set_free_transform_mode(self, enabled: bool):
+        self._free_transform_mode = enabled
+        if self._image_item:
+            self._create_handles()
+            self._update_handles_position()
+            if enabled:
+                rect = self._image_item.boundingRect()
+                self._corner_positions = {
+                    "top_left": QPointF(rect.left(), rect.top()),
+                    "top_right": QPointF(rect.right(), rect.top()),
+                    "bottom_right": QPointF(rect.right(), rect.bottom()),
+                    "bottom_left": QPointF(rect.left(), rect.bottom()),
+                }
 
     def set_image(self, pixmap: QPixmap):
         self._scene.clear()
         self._handles.clear()
+        self._corner_positions.clear()
 
         if pixmap.isNull():
             return
@@ -93,6 +113,15 @@ class PreviewGraphicsView(QGraphicsView):
         self._current_width = pixmap.width()
         self._current_height = pixmap.height()
         self._original_aspect = pixmap.width() / pixmap.height() if pixmap.height() > 0 else 1
+
+        if self._free_transform_mode:
+            rect = self._image_item.boundingRect()
+            self._corner_positions = {
+                "top_left": QPointF(rect.left(), rect.top()),
+                "top_right": QPointF(rect.right(), rect.top()),
+                "bottom_right": QPointF(rect.right(), rect.bottom()),
+                "bottom_left": QPointF(rect.left(), rect.bottom()),
+            }
 
         self._create_border()
         self._create_handles()
@@ -112,40 +141,73 @@ class PreviewGraphicsView(QGraphicsView):
         self._scene.addItem(self._border_rect)
 
     def _create_handles(self):
-        positions = [
-            "top_left", "top", "top_right",
-            "left", "right",
-            "bottom_left", "bottom", "bottom_right"
-        ]
-        for pos in positions:
-            handle = ResizeHandle(pos)
-            self._scene.addItem(handle)
-            self._handles[pos] = handle
+        for handle in self._handles.values():
+            self._scene.removeItem(handle)
+        self._handles.clear()
+
+        # 자유변형 모드에서만 핸들 표시
+        if self._free_transform_mode:
+            positions = ["top_left", "top_right", "bottom_right", "bottom_left"]
+
+            for pos in positions:
+                handle = ResizeHandle(pos)
+                self._scene.addItem(handle)
+                self._handles[pos] = handle
 
     def _update_handles_position(self):
         if self._image_item is None or not self._handles:
             return
 
-        rect = self._image_item.boundingRect()
-        x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
+        if self._free_transform_mode and self._corner_positions:
+            for name, pos in self._corner_positions.items():
+                if name in self._handles:
+                    self._handles[name].setPos(pos)
 
-        positions = {
-            "top_left": (x, y),
-            "top": (x + w / 2, y),
-            "top_right": (x + w, y),
-            "left": (x, y + h / 2),
-            "right": (x + w, y + h / 2),
-            "bottom_left": (x, y + h),
-            "bottom": (x + w / 2, y + h),
-            "bottom_right": (x + w, y + h),
-        }
+            if self._border_rect and len(self._corner_positions) == 4:
+                path = QPainterPath()
+                corners = [
+                    self._corner_positions["top_left"],
+                    self._corner_positions["top_right"],
+                    self._corner_positions["bottom_right"],
+                    self._corner_positions["bottom_left"]
+                ]
+                path.moveTo(corners[0])
+                for corner in corners[1:]:
+                    path.lineTo(corner)
+                path.closeSubpath()
+                self._scene.removeItem(self._border_rect)
+                self._border_rect = QGraphicsPathItem(path)
+                self._border_rect.setPen(QPen(QColor(66, 133, 244), 2, Qt.PenStyle.DashLine))
+                self._border_rect.setBrush(Qt.BrushStyle.NoBrush)
+                self._scene.addItem(self._border_rect)
+        else:
+            rect = self._image_item.boundingRect()
+            x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
 
-        for name, (px, py) in positions.items():
-            if name in self._handles:
-                self._handles[name].setPos(px, py)
+            positions = {
+                "top_left": (x, y),
+                "top": (x + w / 2, y),
+                "top_right": (x + w, y),
+                "left": (x, y + h / 2),
+                "right": (x + w, y + h / 2),
+                "bottom_left": (x, y + h),
+                "bottom": (x + w / 2, y + h),
+                "bottom_right": (x + w, y + h),
+            }
 
-        if self._border_rect:
-            self._border_rect.setRect(rect)
+            for name, (px, py) in positions.items():
+                if name in self._handles:
+                    self._handles[name].setPos(px, py)
+
+            if self._border_rect:
+                if not isinstance(self._border_rect, QGraphicsRectItem):
+                    self._scene.removeItem(self._border_rect)
+                    self._border_rect = QGraphicsRectItem(rect)
+                    self._border_rect.setPen(QPen(QColor(66, 133, 244), 2, Qt.PenStyle.DashLine))
+                    self._border_rect.setBrush(Qt.BrushStyle.NoBrush)
+                    self._scene.addItem(self._border_rect)
+                else:
+                    self._border_rect.setRect(rect)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -166,6 +228,24 @@ class PreviewGraphicsView(QGraphicsView):
     def mouseMoveEvent(self, event):
         if self._dragging and self._image_item:
             scene_pos = self.mapToScene(event.pos())
+
+            if self._free_transform_mode:
+                if self._drag_handle in self._corner_positions:
+                    self._corner_positions[self._drag_handle] = scene_pos
+                    self._update_handles_position()
+
+                    image_corners = [
+                        self._image_item.mapFromScene(self._corner_positions["top_left"]),
+                        self._image_item.mapFromScene(self._corner_positions["top_right"]),
+                        self._image_item.mapFromScene(self._corner_positions["bottom_right"]),
+                        self._image_item.mapFromScene(self._corner_positions["bottom_left"])
+                    ]
+                    corner_list = [(c.x(), c.y()) for c in image_corners]
+                    self.perspective_changed.emit(corner_list)
+
+                event.accept()
+                return
+
             delta = scene_pos - self._drag_start_pos
 
             new_width = self._current_width
@@ -220,6 +300,7 @@ class PreviewGraphicsView(QGraphicsView):
 
 class PreviewWidget(QWidget):
     size_changed = Signal(int, int)
+    perspective_changed = Signal(list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -235,6 +316,7 @@ class PreviewWidget(QWidget):
 
         self._view = PreviewGraphicsView()
         self._view.size_changed.connect(self.size_changed)
+        self._view.perspective_changed.connect(self.perspective_changed)
         layout.addWidget(self._view)
 
         self._info_label = QLabel("이미지를 드래그하여 추가하세요")
@@ -251,6 +333,13 @@ class PreviewWidget(QWidget):
 
     def set_keep_ratio(self, keep: bool):
         self._view.set_keep_ratio(keep)
+
+    def set_free_transform_mode(self, enabled: bool):
+        self._view.set_free_transform_mode(enabled)
+        if enabled:
+            self._title.setText("미리보기 - 자유변형 모드")
+        else:
+            self._title.setText("미리보기")
 
     def update_info(self, width: int, height: int):
         self._info_label.setText(f"크기: {width} x {height}")

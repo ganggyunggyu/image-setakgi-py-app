@@ -311,11 +311,14 @@ class ExifPanel(QWidget):
 
 class OptionsPanel(QWidget):
     options_changed = Signal(dict)
+    free_transform_toggled = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._setup_ui()
         self._connect_signals()
+        # 자유변형 모드 항상 활성화
+        self.free_transform_toggled.emit(True)
 
     def _setup_ui(self):
         scroll = QScrollArea()
@@ -333,6 +336,7 @@ class OptionsPanel(QWidget):
 
         transform_group = QGroupBox("변환")
         transform_layout = QVBoxLayout(transform_group)
+
         self._rotation = RotationWidget()
         transform_layout.addWidget(self._rotation)
         layout.addWidget(transform_group)
@@ -376,6 +380,10 @@ class OptionsPanel(QWidget):
         self._noise.value_changed.connect(self._emit_change)
         self._exif_panel.exif_changed.connect(self._emit_change)
 
+    def _on_free_transform_toggle(self, checked: bool):
+        self.free_transform_toggled.emit(checked)
+        self._emit_change()
+
     def _emit_change(self, *args):
         self.options_changed.emit(self.get_options())
 
@@ -385,6 +393,7 @@ class OptionsPanel(QWidget):
             "width": w,
             "height": h,
             "keep_ratio": self._size_widget.is_ratio_locked(),
+            "free_transform_mode": True,  # 항상 자유변형 모드
             "rotation": self._rotation.value(),
             "brightness": self._brightness.value(),
             "contrast": self._contrast.value(),
