@@ -1,29 +1,26 @@
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-venv/
-env/
-ENV/
-*.egg-info/
-.eggs/
-
-# PyInstaller
-dist/
-build/
 
 # IDE
-.vscode/
 .idea/
+.vscode/
 *.swp
 *.swo
-*~
-
-# OS
 .DS_Store
-Thumbs.db
 
-# Local config
-.env
+# App Config (local)
+.image_setakgi/
