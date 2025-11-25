@@ -1,0 +1,467 @@
+from PySide6.QtWidgets import (
+    QMainWindow,
+    QWidget,
+    QHBoxLayout,
+    QVBoxLayout,
+    QSplitter,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QFileDialog,
+    QProgressBar,
+    QLabel,
+    QMessageBox,
+    QApplication,
+)
+from PySide6.QtCore import Qt, Signal, QThreadPool, QRunnable, QObject
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QPixmap
+from PIL import Image
+from pathlib import Path
+from typing import Optional
+
+from .preview_widget import PreviewWidget
+from .options_panel import OptionsPanel
+from app.core.preview import PreviewThread, pil_to_qpixmap, create_thumbnail
+from app.core.image_ops import apply_transforms
+from app.core.metadata import (
+    read_exif,
+    remove_exif,
+    create_exif_bytes,
+    apply_exif_overrides,
+)
+from app.core.transform_history import record_transform
+from app.core.save_output import OutputManager
+from app.core.config import load_config, save_config
+
+
+class WorkerSignals(QObject):
+    progress = Signal(int, int)
+    finished = Signal(str, bool, str)
+    all_done = Signal()
+
+
+class TransformWorker(QRunnable):
+    def __init__(
+        self,
+        filepath: str,
+        options: dict,
+        output_manager: OutputManager,
+    ):
+        super().__init__()
+        self.filepath = filepath
+        self.options = options
+        self.output_manager = output_manager
+        self.signals = WorkerSignals()
+
+    def run(self):
+        try:
+            img = Image.open(self.filepath)
+
+            result = apply_transforms(
+                img,
+                width=self.options.get("width"),
+                height=self.options.get("height"),
+                keep_ratio=self.options.get("keep_ratio", True),
+                rotation=self.options.get("rotation", 0),
+                brightness=self.options.get("brightness", 0),
+                contrast=self.options.get("contrast", 0),
+                saturation=self.options.get("saturation", 0),
+                noise=self.options.get("noise", 0),
+            )
+
+            exif_opts = self.options.get("exif", {})
+            exif_bytes = None
+
+            if exif_opts.get("remove_all"):
+                result = remove_exif(result)
+            elif exif_opts.get("override"):
+                override_data = {
+                    "Make": exif_opts.get("make", ""),
+                    "Model": exif_opts.get("model", ""),
+                    "DateTimeOriginal": exif_opts.get("datetime", ""),
+                }
+                override_data = {k: v for k, v in override_data.items() if v}
+                if override_data:
+                    exif_bytes = create_exif_bytes(override_data)
+                result = remove_exif(result)
+
+            filename = Path(self.filepath).name
+            output_path = self.output_manager.save(result, filename, exif_bytes)
+
+            metadata_actions = []
+            if exif_opts.get("remove_all"):
+                metadata_actions.append("remove_all")
+            if exif_opts.get("override"):
+                metadata_actions.append("override")
+
+            record_transform(
+                filename=filename,
+                resize={"w": self.options.get("width"), "h": self.options.get("height")},
+                rotation=self.options.get("rotation", 0),
+                brightness=self.options.get("brightness", 0),
+                contrast=self.options.get("contrast", 0),
+                saturation=self.options.get("saturation", 0),
+                noise=self.options.get("noise", 0),
+                metadata_actions=metadata_actions,
+            )
+
+            self.signals.finished.emit(self.filepath, True, str(output_path))
+
+        except Exception as e:
+            self.signals.finished.emit(self.filepath, False, str(e))
+
+
+class FileListWidget(QListWidget):
+    files_dropped = Signal(list)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.setDragEnabled(False)
+        self.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event: QDropEvent):
+        files = []
+        for url in event.mimeData().urls():
+            path = url.toLocalFile()
+            if path.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp")):
+                files.append(path)
+
+        if files:
+            self.files_dropped.emit(files)
+            event.acceptProposedAction()
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Image Setakgi - 이미지 세탁기")
+        self.setMinimumSize(1200, 800)
+
+        self._files: list[str] = []
+        self._current_file: Optional[str] = None
+        self._current_image: Optional[Image.Image] = None
+        self._thread_pool = QThreadPool()
+        self._preview_thread: Optional[PreviewThread] = None
+
+        self._config = load_config()
+
+        self._setup_ui()
+        self._connect_signals()
+        self._apply_styles()
+
+    def _setup_ui(self):
+        central = QWidget()
+        self.setCentralWidget(central)
+
+        main_layout = QHBoxLayout(central)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+
+        file_label = QLabel("파일 목록")
+        file_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        left_layout.addWidget(file_label)
+
+        self._file_list = FileListWidget()
+        left_layout.addWidget(self._file_list)
+
+        btn_layout = QHBoxLayout()
+        self._add_btn = QPushButton("파일 추가")
+        self._remove_btn = QPushButton("선택 제거")
+        self._clear_btn = QPushButton("전체 제거")
+        btn_layout.addWidget(self._add_btn)
+        btn_layout.addWidget(self._remove_btn)
+        btn_layout.addWidget(self._clear_btn)
+        left_layout.addLayout(btn_layout)
+
+        splitter.addWidget(left_panel)
+
+        center_panel = QWidget()
+        center_layout = QVBoxLayout(center_panel)
+
+        self._preview = PreviewWidget()
+        center_layout.addWidget(self._preview)
+
+        splitter.addWidget(center_panel)
+
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+
+        self._options = OptionsPanel()
+        right_layout.addWidget(self._options)
+
+        self._progress = QProgressBar()
+        self._progress.setVisible(False)
+        right_layout.addWidget(self._progress)
+
+        self._status_label = QLabel("")
+        right_layout.addWidget(self._status_label)
+
+        action_layout = QHBoxLayout()
+        self._output_btn = QPushButton("출력 폴더 선택")
+        self._convert_btn = QPushButton("변환 실행")
+        self._convert_btn.setStyleSheet(
+            "background-color: #4285f4; color: white; font-weight: bold; padding: 10px;"
+        )
+        action_layout.addWidget(self._output_btn)
+        action_layout.addWidget(self._convert_btn)
+        right_layout.addLayout(action_layout)
+
+        self._output_path_label = QLabel("출력 폴더: 미선택")
+        right_layout.addWidget(self._output_path_label)
+
+        splitter.addWidget(right_panel)
+
+        splitter.setSizes([250, 500, 350])
+
+        main_layout.addWidget(splitter)
+
+    def _connect_signals(self):
+        self._file_list.files_dropped.connect(self._add_files)
+        self._file_list.currentRowChanged.connect(self._on_file_selected)
+
+        self._add_btn.clicked.connect(self._open_file_dialog)
+        self._remove_btn.clicked.connect(self._remove_selected)
+        self._clear_btn.clicked.connect(self._clear_files)
+
+        self._options.options_changed.connect(self._on_options_changed)
+        self._preview.size_changed.connect(self._on_preview_size_changed)
+
+        self._output_btn.clicked.connect(self._select_output_folder)
+        self._convert_btn.clicked.connect(self._start_conversion)
+
+    def _apply_styles(self):
+        self.setStyleSheet(
+            """
+            QMainWindow {
+                background-color: #1e1e1e;
+            }
+            QWidget {
+                background-color: #2d2d2d;
+                color: #ffffff;
+            }
+            QListWidget {
+                background-color: #3d3d3d;
+                border: 1px solid #555;
+                border-radius: 4px;
+            }
+            QListWidget::item {
+                padding: 8px;
+            }
+            QListWidget::item:selected {
+                background-color: #4285f4;
+            }
+            QPushButton {
+                background-color: #555;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #666;
+            }
+            QGroupBox {
+                border: 1px solid #555;
+                border-radius: 4px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+            }
+            QSlider::groove:horizontal {
+                height: 6px;
+                background: #555;
+                border-radius: 3px;
+            }
+            QSlider::handle:horizontal {
+                width: 16px;
+                height: 16px;
+                background: #4285f4;
+                border-radius: 8px;
+                margin: -5px 0;
+            }
+            QSpinBox, QDoubleSpinBox, QLineEdit {
+                background-color: #3d3d3d;
+                border: 1px solid #555;
+                border-radius: 4px;
+                padding: 4px;
+            }
+            QProgressBar {
+                border: 1px solid #555;
+                border-radius: 4px;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background-color: #4285f4;
+            }
+            """
+        )
+
+    def _add_files(self, files: list[str]):
+        for f in files:
+            if f not in self._files:
+                self._files.append(f)
+                item = QListWidgetItem(Path(f).name)
+                item.setData(Qt.ItemDataRole.UserRole, f)
+                self._file_list.addItem(item)
+
+        if self._files and self._current_file is None:
+            self._file_list.setCurrentRow(0)
+
+    def _open_file_dialog(self):
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "이미지 파일 선택",
+            self._config.get("last_input_dir", ""),
+            "Images (*.png *.jpg *.jpeg *.webp *.bmp)",
+        )
+        if files:
+            self._config["last_input_dir"] = str(Path(files[0]).parent)
+            save_config(self._config)
+            self._add_files(files)
+
+    def _remove_selected(self):
+        row = self._file_list.currentRow()
+        if row >= 0:
+            self._file_list.takeItem(row)
+            del self._files[row]
+            if not self._files:
+                self._current_file = None
+                self._current_image = None
+                self._preview.set_image(QPixmap())
+
+    def _clear_files(self):
+        self._file_list.clear()
+        self._files.clear()
+        self._current_file = None
+        self._current_image = None
+        self._preview.set_image(QPixmap())
+
+    def _on_file_selected(self, row: int):
+        if row < 0 or row >= len(self._files):
+            return
+
+        self._current_file = self._files[row]
+        self._load_image(self._current_file)
+
+    def _load_image(self, filepath: str):
+        try:
+            self._current_image = Image.open(filepath)
+            w, h = self._current_image.size
+
+            self._options.set_original_size(w, h)
+            self._preview.set_keep_ratio(True)
+
+            self._update_preview()
+
+        except Exception as e:
+            QMessageBox.warning(self, "오류", f"이미지 로드 실패: {e}")
+
+    def _update_preview(self):
+        if self._current_image is None:
+            return
+
+        if self._preview_thread and self._preview_thread.isRunning():
+            self._preview_thread.quit()
+            self._preview_thread.wait()
+
+        self._preview_thread = PreviewThread(self)
+        self._preview_thread.set_source(self._current_image)
+        self._preview_thread.set_options(self._options.get_options())
+        self._preview_thread.preview_ready.connect(self._on_preview_ready)
+        self._preview_thread.preview_error.connect(self._on_preview_error)
+        self._preview_thread.start()
+
+    def _on_preview_ready(self, pixmap: QPixmap):
+        self._preview.set_image(pixmap)
+        opts = self._options.get_options()
+        self._preview.update_info(opts.get("width", 0), opts.get("height", 0))
+
+    def _on_preview_error(self, error: str):
+        self._status_label.setText(f"미리보기 오류: {error}")
+
+    def _on_options_changed(self, options: dict):
+        self._update_preview()
+
+    def _on_preview_size_changed(self, width: int, height: int):
+        self._options.set_size_from_preview(width, height)
+
+    def _select_output_folder(self):
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "출력 폴더 선택",
+            self._config.get("last_output_dir", ""),
+        )
+        if folder:
+            self._config["last_output_dir"] = folder
+            save_config(self._config)
+            self._output_path_label.setText(f"출력 폴더: {folder}")
+
+    def _start_conversion(self):
+        if not self._files:
+            QMessageBox.warning(self, "경고", "변환할 파일이 없습니다.")
+            return
+
+        output_dir = self._config.get("last_output_dir", "")
+        if not output_dir:
+            QMessageBox.warning(self, "경고", "출력 폴더를 선택하세요.")
+            return
+
+        self._progress.setVisible(True)
+        self._progress.setMaximum(len(self._files))
+        self._progress.setValue(0)
+        self._convert_btn.setEnabled(False)
+
+        self._completed = 0
+        self._failed = []
+
+        output_manager = OutputManager(output_dir)
+        options = self._options.get_options()
+
+        for filepath in self._files:
+            worker = TransformWorker(filepath, options, output_manager)
+            worker.signals.finished.connect(self._on_worker_finished)
+            self._thread_pool.start(worker)
+
+        self._output_manager = output_manager
+
+    def _on_worker_finished(self, filepath: str, success: bool, result: str):
+        self._completed += 1
+        self._progress.setValue(self._completed)
+
+        if not success:
+            self._failed.append((filepath, result))
+
+        if self._completed >= len(self._files):
+            self._progress.setVisible(False)
+            self._convert_btn.setEnabled(True)
+
+            if self._failed:
+                msg = f"완료: {self._completed - len(self._failed)}개 성공, {len(self._failed)}개 실패"
+                self._status_label.setText(msg)
+            else:
+                self._status_label.setText(f"완료: {self._completed}개 변환됨")
+                QMessageBox.information(
+                    self,
+                    "완료",
+                    f"모든 파일이 변환되었습니다.\n출력 폴더: {self._output_manager.get_output_dir()}",
+                )
+
+    def closeEvent(self, event):
+        save_config(self._config)
+        self._thread_pool.waitForDone()
+        super().closeEvent(event)
