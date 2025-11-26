@@ -158,14 +158,6 @@ class SizeWidget(QWidget):
         self._width_spin.valueChanged.connect(self._on_width_change)
         size_row.addWidget(self._width_spin)
 
-        self._link_btn = QPushButton("🔗")
-        self._link_btn.setCheckable(True)
-        self._link_btn.setChecked(True)
-        self._link_btn.setFixedSize(30, 30)
-        self._link_btn.setToolTip("비율 유지")
-        self._link_btn.toggled.connect(self._on_ratio_toggle)
-        size_row.addWidget(self._link_btn)
-
         self._height_label = QLabel("높이")
         self._height_label.setFixedWidth(30)
         size_row.addWidget(self._height_label)
@@ -185,27 +177,11 @@ class SizeWidget(QWidget):
         layout.addLayout(reset_row)
 
     def _on_width_change(self, value: int):
-        if self._link_btn.isChecked() and self._original_w > 0:
-            ratio = value / self._original_w
-            new_h = int(self._original_h * ratio)
-            self._height_spin.blockSignals(True)
-            self._height_spin.setValue(new_h)
-            self._height_spin.blockSignals(False)
-
         self.size_changed.emit(self._width_spin.value(), self._height_spin.value())
 
     def _on_height_change(self, value: int):
-        if self._link_btn.isChecked() and self._original_h > 0:
-            ratio = value / self._original_h
-            new_w = int(self._original_w * ratio)
-            self._width_spin.blockSignals(True)
-            self._width_spin.setValue(new_w)
-            self._width_spin.blockSignals(False)
-
         self.size_changed.emit(self._width_spin.value(), self._height_spin.value())
 
-    def _on_ratio_toggle(self, checked: bool):
-        self._link_btn.setText("🔗" if checked else "🔓")
 
     def _on_reset(self):
         if self._original_w > 0 and self._original_h > 0:
@@ -228,7 +204,7 @@ class SizeWidget(QWidget):
         return self._width_spin.value(), self._height_spin.value()
 
     def is_ratio_locked(self) -> bool:
-        return self._link_btn.isChecked()
+        return False
 
 
 class ExifPanel(QWidget):
