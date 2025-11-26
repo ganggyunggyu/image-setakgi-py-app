@@ -23,12 +23,15 @@ def create_thumbnail(img: Image.Image, max_size: int = MAX_PREVIEW_SIZE) -> Imag
 def pil_to_qpixmap(img: Image.Image) -> QPixmap:
     if img.mode == "RGBA":
         qformat = QImage.Format.Format_RGBA8888
+        bytes_per_pixel = 4
     else:
         img = img.convert("RGB")
         qformat = QImage.Format.Format_RGB888
+        bytes_per_pixel = 3
 
     data = img.tobytes("raw", img.mode)
-    qimage = QImage(data, img.width, img.height, qformat)
+    bytes_per_line = img.width * bytes_per_pixel
+    qimage = QImage(data, img.width, img.height, bytes_per_line, qformat)
     return QPixmap.fromImage(qimage.copy())
 
 
@@ -53,32 +56,18 @@ class PreviewWorker(QObject):
             return
 
         try:
-            preview_w = self._options.get("width")
-            preview_h = self._options.get("height")
-            orig_w, orig_h = self._img.size
-
-            if preview_w and preview_h:
-                scale = min(MAX_PREVIEW_SIZE / preview_w, MAX_PREVIEW_SIZE / preview_h, 1)
-                preview_w = int(preview_w * scale)
-                preview_h = int(preview_h * scale)
-            else:
-                preview_w = None
-                preview_h = None
-
             perspective_corners = self._options.get("perspective_corners")
+            crop = self._options.get("crop")
 
             result = apply_transforms(
                 self._img,
-                width=preview_w,
-                height=preview_h,
-                keep_ratio=self._options.get("keep_ratio", True),
                 rotation=self._options.get("rotation", 0),
                 brightness=self._options.get("brightness", 0),
                 contrast=self._options.get("contrast", 0),
                 saturation=self._options.get("saturation", 0),
                 noise=self._options.get("noise", 0),
                 perspective_corners=perspective_corners,
-                crop_1px_enabled=self._options.get("crop_1px_enabled", False),
+                crop=crop,
             )
 
             pixmap = pil_to_qpixmap(result)

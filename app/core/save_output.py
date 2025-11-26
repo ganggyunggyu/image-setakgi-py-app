@@ -6,9 +6,47 @@ from typing import Optional
 from .metadata import save_with_exif, remove_exif, create_exif_bytes
 
 
-def create_output_folder(base_dir: str) -> Path:
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = Path(base_dir) / f"output_{timestamp}"
+def create_output_folder(base_dir: str, options: dict = None) -> Path:
+    parts = []
+
+    if options:
+        crop = options.get("crop", {})
+        crop_val = crop.get("top", 0)
+        if crop_val != 0:
+            parts.append(f"크롭{crop_val}")
+
+        rotation = options.get("rotation", 0)
+        if rotation != 0:
+            parts.append(f"회전{rotation}")
+
+        brightness = options.get("brightness", 0)
+        if brightness != 0:
+            parts.append(f"밝기{brightness}")
+
+        contrast = options.get("contrast", 0)
+        if contrast != 0:
+            parts.append(f"대비{contrast}")
+
+        saturation = options.get("saturation", 0)
+        if saturation != 0:
+            parts.append(f"채도{saturation}")
+
+        noise = options.get("noise", 0)
+        if noise != 0:
+            parts.append(f"노이즈{noise}")
+
+    if not parts:
+        parts.append("output")
+
+    folder_name = "_".join(parts)
+    output_dir = Path(base_dir) / folder_name
+
+    if output_dir.exists():
+        counter = 1
+        while (Path(base_dir) / f"{folder_name}_{counter}").exists():
+            counter += 1
+        output_dir = Path(base_dir) / f"{folder_name}_{counter}"
+
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
 
@@ -55,8 +93,8 @@ def save_transformed_image(
 
 
 class OutputManager:
-    def __init__(self, base_dir: str):
-        self.output_dir = create_output_folder(base_dir)
+    def __init__(self, base_dir: str, options: dict = None):
+        self.output_dir = create_output_folder(base_dir, options)
         self.saved_files: list[Path] = []
 
     def save(

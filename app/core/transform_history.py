@@ -26,7 +26,7 @@ def save_history(history: dict[str, Any]):
 
 def record_transform(
     filename: str,
-    resize: Optional[dict] = None,
+    crop: Optional[dict] = None,
     rotation: float = 0,
     brightness: int = 0,
     contrast: int = 0,
@@ -37,7 +37,7 @@ def record_transform(
     history = load_history()
 
     record = {
-        "resize": resize or {},
+        "crop": crop or {},
         "rotation": rotation,
         "brightness": brightness,
         "contrast": contrast,

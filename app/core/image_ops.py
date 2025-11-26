@@ -15,10 +15,49 @@ def crop_edges(
         return img.copy()
 
     w, h = img.size
+
+    # 음수 값이 있으면 패딩 추가
+    if top < 0 or bottom < 0 or left < 0 or right < 0:
+        pad_top = abs(min(0, top))
+        pad_bottom = abs(min(0, bottom))
+        pad_left = abs(min(0, left))
+        pad_right = abs(min(0, right))
+
+        new_w = w + pad_left + pad_right
+        new_h = h + pad_top + pad_bottom
+
+        # 짝수 크기 보정
+        if new_w % 2 == 1:
+            new_w += 1
+            pad_right += 1
+        if new_h % 2 == 1:
+            new_h += 1
+            pad_bottom += 1
+
+        # 패딩은 항상 투명 배경 (RGBA)
+        if img.mode != "RGBA":
+            img = img.convert("RGBA")
+
+        new_img = Image.new("RGBA", (new_w, new_h), (0, 0, 0, 0))
+        new_img.paste(img, (pad_left, pad_top))
+        return new_img
+
+    # 양수 값은 크롭
     new_left = min(left, w - 1)
     new_top = min(top, h - 1)
     new_right = max(new_left + 1, w - right)
     new_bottom = max(new_top + 1, h - bottom)
+
+    out_w = new_right - new_left
+    out_h = new_bottom - new_top
+
+    if out_w % 2 == 1:
+        new_right -= 1
+    if out_h % 2 == 1:
+        new_bottom -= 1
+
+    new_right = max(new_left + 2, new_right)
+    new_bottom = max(new_top + 2, new_bottom)
 
     return img.crop((new_left, new_top, new_right, new_bottom))
 
@@ -93,9 +132,6 @@ def add_noise(img: Image.Image, intensity: int) -> Image.Image:
 
 def apply_transforms(
     img: Image.Image,
-    width: Optional[int] = None,
-    height: Optional[int] = None,
-    keep_ratio: bool = True,
     rotation: float = 0.0,
     brightness: int = 0,
     contrast: int = 0,
