@@ -73,16 +73,13 @@ class TransformWorker(QRunnable):
 
             result = apply_transforms(
                 img,
-                width=self.options.get("width"),
-                height=self.options.get("height"),
-                keep_ratio=self.options.get("keep_ratio", True),
                 rotation=self.options.get("rotation", 0),
                 brightness=self.options.get("brightness", 0),
                 contrast=self.options.get("contrast", 0),
                 saturation=self.options.get("saturation", 0),
                 noise=self.options.get("noise", 0),
                 perspective_corners=perspective_corners,
-                crop_1px_enabled=self.options.get("crop_1px_enabled", False),
+                crop=self.options.get("crop"),
             )
 
             exif_opts = self.options.get("exif", {})
@@ -110,9 +107,10 @@ class TransformWorker(QRunnable):
             if exif_opts.get("override"):
                 metadata_actions.append("override")
 
+            crop = self.options.get("crop", {})
             record_transform(
                 filename=filename,
-                resize={"w": self.options.get("width"), "h": self.options.get("height")},
+                crop=crop,
                 rotation=self.options.get("rotation", 0),
                 brightness=self.options.get("brightness", 0),
                 contrast=self.options.get("contrast", 0),
@@ -171,6 +169,10 @@ class MainWindow(QMainWindow):
         self._config = load_config()
         self._perspective_corners: Optional[list] = None
         self._loading_new_image = False
+        self._completed = 0
+        self._failed: list = []
+        self._output_manager: Optional[OutputManager] = None
+        self._workers: list = []
 
         self._setup_ui()
         self._connect_signals()
@@ -259,8 +261,6 @@ class MainWindow(QMainWindow):
         self._options.options_changed.connect(self._on_options_changed)
         self._options.free_transform_toggled.connect(self._on_free_transform_toggle)
         self._options.reset_requested.connect(self._on_reset_requested)
-        self._options._size_widget.size_changed.connect(self._on_size_manually_changed)
-        self._preview.size_changed.connect(self._on_preview_size_changed)
         self._preview.perspective_changed.connect(self._on_perspective_changed)
 
         self._output_btn.clicked.connect(self._select_output_folder)
@@ -420,11 +420,31 @@ class MainWindow(QMainWindow):
         self._preview_thread.start()
 
     def _on_preview_ready(self, pixmap: QPixmap):
-        reset = self._loading_new_image
+        reset = self._loading_new_image or self._perspective_corners is None
         self._loading_new_image = False
         self._preview.set_image(pixmap, reset_transform=reset)
         opts = self._options.get_options()
         self._preview.update_info(opts.get("width", 0), opts.get("height", 0))
+
+        if self._current_image:
+            rotation = opts.get("rotation", 0)
+            crop = opts.get("crop", {})
+            crop_amount = crop.get("top", 0)
+
+            orig_w, orig_h = self._current_image.size
+            max_size = 512
+            ratio = min(max_size / orig_w, max_size / orig_h, 1.0)
+            thumb_w = int(orig_w * ratio)
+            thumb_h = int(orig_h * ratio)
+
+            if crop_amount < 0:
+                pre_rot_w = thumb_w + abs(crop_amount) * 2
+                pre_rot_h = thumb_h + abs(crop_amount) * 2
+            else:
+                pre_rot_w = max(2, thumb_w - crop_amount * 2)
+                pre_rot_h = max(2, thumb_h - crop_amount * 2)
+
+            self._preview.set_rotation(rotation, (pre_rot_w, pre_rot_h))
 
     def _on_preview_error(self, error: str):
         self._status_label.setText(f"미리보기 오류: {error}")
@@ -447,12 +467,6 @@ class MainWindow(QMainWindow):
         if self._current_image:
             self._loading_new_image = True
             self._update_preview()
-
-    def _on_size_manually_changed(self, width: int, height: int):
-        self._perspective_corners = None
-
-    def _on_preview_size_changed(self, width: int, height: int):
-        self._options.set_size_from_preview(width, height)
 
     def _select_output_folder(self):
         folder = QFileDialog.getExistingDirectory(
@@ -482,41 +496,45 @@ class MainWindow(QMainWindow):
 
         self._completed = 0
         self._failed = []
+        self._workers = []
 
-        output_manager = OutputManager(output_dir)
         options = self._options.get_options()
+        output_manager = OutputManager(output_dir, options)
 
         if self._perspective_corners:
             options["perspective_corners"] = self._perspective_corners
 
         for filepath in self._files:
             worker = TransformWorker(filepath, options, output_manager)
-            worker.signals.finished.connect(self._on_worker_finished)
+            worker.setAutoDelete(False)
+            worker.signals.finished.connect(
+                self._on_worker_finished, Qt.ConnectionType.QueuedConnection
+            )
+            self._workers.append(worker)
             self._thread_pool.start(worker)
 
         self._output_manager = output_manager
 
     def _on_worker_finished(self, filepath: str, success: bool, result: str):
-        self._completed += 1
-        self._progress.setValue(self._completed)
-
-        if not success:
+        if success:
+            self._completed += 1
+        else:
             self._failed.append((filepath, result))
 
-        if self._completed >= len(self._files):
+        total_done = self._completed + len(self._failed)
+        self._progress.setValue(total_done)
+
+        if total_done >= len(self._files):
             self._progress.setVisible(False)
             self._convert_btn.setEnabled(True)
+            self._workers.clear()
 
-            if self._failed:
-                msg = f"완료: {self._completed - len(self._failed)}개 성공, {len(self._failed)}개 실패"
-                self._status_label.setText(msg)
-            else:
-                self._status_label.setText(f"완료: {self._completed}개 변환됨")
-                QMessageBox.information(
-                    self,
-                    "완료",
-                    f"모든 파일이 변환되었습니다.\n출력 폴더: {self._output_manager.get_output_dir()}",
-                )
+            self._status_label.setText("변환 완료")
+            QMessageBox.information(
+                self,
+                "완료",
+                f"변환이 완료되었습니다.\n출력 폴더: {self._output_manager.get_output_dir()}",
+            )
 
     def closeEvent(self, event):
         save_config(self._config)

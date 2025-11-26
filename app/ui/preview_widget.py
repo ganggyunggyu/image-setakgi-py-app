@@ -35,7 +35,7 @@ class PreviewWidget(QWidget):
     def set_image(self, pixmap: QPixmap, reset_transform: bool = False):
         self._view.set_image(pixmap, reset_transform)
         if not pixmap.isNull():
-            self._info_label.setText(f"크기: {pixmap.width()} x {pixmap.height()}")
+            self._info_label.setText("")
         else:
             self._info_label.setText("이미지를 드래그하여 추가하세요")
 
@@ -50,5 +50,7 @@ class PreviewWidget(QWidget):
             self._title.setText("미리보기")
 
     def update_info(self, width: int, height: int):
-        self._info_label.setText(f"크기: {width} x {height}")
         self._view.update_display_size(width, height)
+
+    def set_rotation(self, angle: float, original_size: tuple[int, int]):
+        self._view.set_rotation(angle, original_size)

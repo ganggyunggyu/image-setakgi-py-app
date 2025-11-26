@@ -140,51 +140,31 @@ class CropWidget(QWidget):
         super().__init__(parent)
         self._original_w = 0
         self._original_h = 0
-        self._crop = {"top": 0, "bottom": 0, "left": 0, "right": 0}
+        self._crop_amount = 0
         self._setup_ui()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        layout.setSpacing(8)
 
-        directions = [
-            ("top", "상"),
-            ("bottom", "하"),
-            ("left", "좌"),
-            ("right", "우"),
-        ]
+        crop_row = QHBoxLayout()
+        crop_row.setSpacing(8)
 
-        self._spins = {}
-        for key, label_text in directions:
-            row = QHBoxLayout()
-            row.setSpacing(4)
+        label = QLabel("테두리 크롭")
+        label.setFixedWidth(70)
+        crop_row.addWidget(label)
 
-            label = QLabel(label_text)
-            label.setFixedWidth(20)
-            row.addWidget(label)
+        self._spin = QSpinBox()
+        self._spin.setRange(-500, 500)
+        self._spin.setValue(0)
+        self._spin.setSuffix(" px")
+        self._spin.setFixedWidth(100)
+        self._spin.valueChanged.connect(self._on_spin_change)
+        crop_row.addWidget(self._spin)
 
-            minus_btn = QPushButton("-")
-            minus_btn.setFixedSize(30, 26)
-            minus_btn.clicked.connect(lambda checked, k=key: self._adjust_crop(k, 1))
-            row.addWidget(minus_btn)
-
-            spin = QSpinBox()
-            spin.setRange(0, 1000)
-            spin.setValue(0)
-            spin.setSuffix(" px")
-            spin.setFixedWidth(70)
-            spin.valueChanged.connect(lambda val, k=key: self._on_spin_change(k, val))
-            self._spins[key] = spin
-            row.addWidget(spin)
-
-            plus_btn = QPushButton("+")
-            plus_btn.setFixedSize(30, 26)
-            plus_btn.clicked.connect(lambda checked, k=key: self._adjust_crop(k, -1))
-            row.addWidget(plus_btn)
-
-            row.addStretch()
-            layout.addLayout(row)
+        crop_row.addStretch()
+        layout.addLayout(crop_row)
 
         size_row = QHBoxLayout()
         self._size_label = QLabel("출력: 0 x 0")
@@ -199,34 +179,45 @@ class CropWidget(QWidget):
         reset_row.addWidget(self._reset_btn)
         layout.addLayout(reset_row)
 
-    def _adjust_crop(self, direction: str, delta: int):
-        new_val = max(0, self._crop[direction] + delta)
-        self._crop[direction] = new_val
-        self._spins[direction].blockSignals(True)
-        self._spins[direction].setValue(new_val)
-        self._spins[direction].blockSignals(False)
+    def _adjust_crop(self, delta: int):
+        new_val = self._crop_amount + delta
+        self._crop_amount = new_val
+        self._spin.blockSignals(True)
+        self._spin.setValue(new_val)
+        self._spin.blockSignals(False)
         self._update_size_label()
-        self.crop_changed.emit(self._crop.copy())
+        self.crop_changed.emit(self._get_crop_dict())
 
-    def _on_spin_change(self, direction: str, value: int):
-        self._crop[direction] = value
+    def _on_spin_change(self, value: int):
+        self._crop_amount = value
         self._update_size_label()
-        self.crop_changed.emit(self._crop.copy())
+        self.crop_changed.emit(self._get_crop_dict())
+
+    def _get_crop_dict(self) -> dict:
+        return {
+            "top": self._crop_amount,
+            "bottom": self._crop_amount,
+            "left": self._crop_amount,
+            "right": self._crop_amount,
+        }
 
     def _update_size_label(self):
         if self._original_w > 0 and self._original_h > 0:
-            out_w = max(1, self._original_w - self._crop["left"] - self._crop["right"])
-            out_h = max(1, self._original_h - self._crop["top"] - self._crop["bottom"])
+            out_w = max(2, self._original_w - self._crop_amount * 2)
+            out_h = max(2, self._original_h - self._crop_amount * 2)
+            if out_w % 2 == 1:
+                out_w += 1 if self._crop_amount < 0 else -1
+            if out_h % 2 == 1:
+                out_h += 1 if self._crop_amount < 0 else -1
             self._size_label.setText(f"출력: {out_w} x {out_h}")
 
     def _on_reset(self):
-        self._crop = {"top": 0, "bottom": 0, "left": 0, "right": 0}
-        for key, spin in self._spins.items():
-            spin.blockSignals(True)
-            spin.setValue(0)
-            spin.blockSignals(False)
+        self._crop_amount = 0
+        self._spin.blockSignals(True)
+        self._spin.setValue(0)
+        self._spin.blockSignals(False)
         self._update_size_label()
-        self.crop_changed.emit(self._crop.copy())
+        self.crop_changed.emit(self._get_crop_dict())
 
     def set_original_size(self, w: int, h: int):
         self._original_w = w
@@ -234,19 +225,22 @@ class CropWidget(QWidget):
         self._update_size_label()
 
     def get_crop(self) -> dict:
-        return self._crop.copy()
+        return self._get_crop_dict()
 
     def set_crop(self, crop: dict):
-        self._crop = crop.copy()
-        for key, spin in self._spins.items():
-            spin.blockSignals(True)
-            spin.setValue(self._crop.get(key, 0))
-            spin.blockSignals(False)
+        self._crop_amount = crop.get("top", 0)
+        self._spin.blockSignals(True)
+        self._spin.setValue(self._crop_amount)
+        self._spin.blockSignals(False)
         self._update_size_label()
 
     def get_output_size(self) -> tuple[int, int]:
-        out_w = max(1, self._original_w - self._crop["left"] - self._crop["right"])
-        out_h = max(1, self._original_h - self._crop["top"] - self._crop["bottom"])
+        out_w = max(2, self._original_w - self._crop_amount * 2)
+        out_h = max(2, self._original_h - self._crop_amount * 2)
+        if out_w % 2 == 1:
+            out_w += 1 if self._crop_amount < 0 else -1
+        if out_h % 2 == 1:
+            out_h += 1 if self._crop_amount < 0 else -1
         return out_w, out_h
 
 
@@ -348,7 +342,7 @@ class OptionsPanel(QWidget):
         content = QWidget()
         layout = QVBoxLayout(content)
 
-        crop_group = QGroupBox("크롭 (상하좌우)")
+        crop_group = QGroupBox("테두리 크롭")
         crop_layout = QVBoxLayout(crop_group)
         self._crop_widget = CropWidget()
         crop_layout.addWidget(self._crop_widget)
@@ -385,7 +379,7 @@ class OptionsPanel(QWidget):
 
         layout.addStretch()
 
-        reset_all_btn = QPushButton("🔄 전체 초기화")
+        reset_all_btn = QPushButton("전체 초기화")
         reset_all_btn.setStyleSheet("""
             QPushButton {
                 background-color: #ff5252;

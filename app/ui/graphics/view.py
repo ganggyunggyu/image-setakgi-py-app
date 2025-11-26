@@ -1,4 +1,5 @@
 """프리뷰 그래픽스 뷰"""
+import math
 from typing import Optional
 
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsPathItem
@@ -53,6 +54,9 @@ class PreviewGraphicsView(QGraphicsView):
         self._free_transform_mode = False
         self._corner_positions: dict[str, QPointF] = {}
 
+        self._rotation_angle = 0.0
+        self._original_size: tuple[int, int] = (0, 0)
+
     def set_keep_ratio(self, keep: bool) -> None:
         """비율 유지 여부 설정"""
         self._keep_ratio = keep
@@ -78,6 +82,9 @@ class PreviewGraphicsView(QGraphicsView):
 
         self._scene.clear()
         self._handles.clear()
+        self._border_rect = None
+        self._rotation_angle = 0.0
+        self._original_size = (0, 0)
 
         if pixmap.isNull():
             self._corner_positions.clear()
@@ -140,13 +147,15 @@ class PreviewGraphicsView(QGraphicsView):
 
     def _update_handles_position(self) -> None:
         """핸들 위치 업데이트"""
-        if self._image_item is None or not self._handles:
+        if self._image_item is None:
             return
 
         if self._free_transform_mode and self._corner_positions:
             self._update_free_transform_handles()
-        else:
+        elif self._handles:
             self._update_resize_handles()
+        else:
+            self._update_border_only()
 
     def _update_free_transform_handles(self) -> None:
         """자유 변형 모드 핸들 위치 업데이트"""
@@ -195,6 +204,67 @@ class PreviewGraphicsView(QGraphicsView):
             if name in self._handles:
                 self._handles[name].setPos(px, py)
 
+        self._update_border_rect(rect)
+
+    def _update_border_only(self) -> None:
+        """테두리만 업데이트 (핸들 없는 경우)"""
+        if self._image_item is None:
+            return
+
+        if self._rotation_angle != 0 and self._original_size[0] > 0:
+            self._update_rotated_border()
+        else:
+            rect = self._image_item.boundingRect()
+            self._update_border_rect(rect)
+
+    def _update_rotated_border(self) -> None:
+        """회전된 테두리 업데이트"""
+        if self._image_item is None:
+            return
+
+        orig_w, orig_h = self._original_size
+        if orig_w <= 0 or orig_h <= 0:
+            return
+
+        rect = self._image_item.boundingRect()
+        cx = rect.center().x()
+        cy = rect.center().y()
+
+        half_w = orig_w / 2
+        half_h = orig_h / 2
+
+        rad = math.radians(self._rotation_angle)
+        cos_a = math.cos(rad)
+        sin_a = math.sin(rad)
+
+        corners = [
+            (-half_w, -half_h),
+            (half_w, -half_h),
+            (half_w, half_h),
+            (-half_w, half_h),
+        ]
+
+        rotated_corners = []
+        for x, y in corners:
+            rx = x * cos_a - y * sin_a + cx
+            ry = x * sin_a + y * cos_a + cy
+            rotated_corners.append(QPointF(rx, ry))
+
+        path = QPainterPath()
+        path.moveTo(rotated_corners[0])
+        for corner in rotated_corners[1:]:
+            path.lineTo(corner)
+        path.closeSubpath()
+
+        if self._border_rect:
+            self._scene.removeItem(self._border_rect)
+        self._border_rect = QGraphicsPathItem(path)
+        self._border_rect.setPen(QPen(QColor(66, 133, 244), BORDER_WIDTH, Qt.PenStyle.DashLine))
+        self._border_rect.setBrush(Qt.BrushStyle.NoBrush)
+        self._scene.addItem(self._border_rect)
+
+    def _update_border_rect(self, rect: QRectF) -> None:
+        """테두리 사각형 업데이트"""
         if self._border_rect:
             if not isinstance(self._border_rect, QGraphicsRectItem):
                 self._scene.removeItem(self._border_rect)
@@ -324,3 +394,10 @@ class PreviewGraphicsView(QGraphicsView):
         """디스플레이 크기 업데이트"""
         self._current_width = width
         self._current_height = height
+
+    def set_rotation(self, angle: float, original_size: tuple[int, int]) -> None:
+        """회전 각도 및 원본 크기 설정"""
+        self._rotation_angle = angle
+        self._original_size = original_size
+        if self._image_item and not self._free_transform_mode:
+            self._update_rotated_border()
