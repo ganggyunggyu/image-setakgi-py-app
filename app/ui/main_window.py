@@ -82,6 +82,7 @@ class TransformWorker(QRunnable):
                 saturation=self.options.get("saturation", 0),
                 noise=self.options.get("noise", 0),
                 perspective_corners=perspective_corners,
+                crop_1px_enabled=self.options.get("crop_1px_enabled", False),
             )
 
             exif_opts = self.options.get("exif", {})
@@ -169,6 +170,7 @@ class MainWindow(QMainWindow):
 
         self._config = load_config()
         self._perspective_corners: Optional[list] = None
+        self._loading_new_image = False
 
         self._setup_ui()
         self._connect_signals()
@@ -256,6 +258,8 @@ class MainWindow(QMainWindow):
 
         self._options.options_changed.connect(self._on_options_changed)
         self._options.free_transform_toggled.connect(self._on_free_transform_toggle)
+        self._options.reset_requested.connect(self._on_reset_requested)
+        self._options._size_widget.size_changed.connect(self._on_size_manually_changed)
         self._preview.size_changed.connect(self._on_preview_size_changed)
         self._preview.perspective_changed.connect(self._on_perspective_changed)
 
@@ -381,15 +385,18 @@ class MainWindow(QMainWindow):
 
     def _load_image(self, filepath: str):
         try:
+            self._loading_new_image = True
             self._current_image = Image.open(filepath)
             w, h = self._current_image.size
 
             self._options.set_original_size(w, h)
             self._preview.set_keep_ratio(True)
+            self._perspective_corners = None
 
             self._update_preview()
 
         except Exception as e:
+            self._loading_new_image = False
             QMessageBox.warning(self, "오류", f"이미지 로드 실패: {e}")
 
     def _update_preview(self):
@@ -413,7 +420,9 @@ class MainWindow(QMainWindow):
         self._preview_thread.start()
 
     def _on_preview_ready(self, pixmap: QPixmap):
-        self._preview.set_image(pixmap)
+        reset = self._loading_new_image
+        self._loading_new_image = False
+        self._preview.set_image(pixmap, reset_transform=reset)
         opts = self._options.get_options()
         self._preview.update_info(opts.get("width", 0), opts.get("height", 0))
 
@@ -432,6 +441,15 @@ class MainWindow(QMainWindow):
     def _on_perspective_changed(self, corners: list):
         self._perspective_corners = corners
         self._update_preview()
+
+    def _on_reset_requested(self):
+        self._perspective_corners = None
+        if self._current_image:
+            self._loading_new_image = True
+            self._update_preview()
+
+    def _on_size_manually_changed(self, width: int, height: int):
+        self._perspective_corners = None
 
     def _on_preview_size_changed(self, width: int, height: int):
         self._options.set_size_from_preview(width, height)

@@ -4,6 +4,25 @@ from typing import Optional, List, Tuple
 import io
 
 
+def crop_edges(
+    img: Image.Image,
+    top: int = 0,
+    bottom: int = 0,
+    left: int = 0,
+    right: int = 0,
+) -> Image.Image:
+    if top == 0 and bottom == 0 and left == 0 and right == 0:
+        return img.copy()
+
+    w, h = img.size
+    new_left = min(left, w - 1)
+    new_top = min(top, h - 1)
+    new_right = max(new_left + 1, w - right)
+    new_bottom = max(new_top + 1, h - bottom)
+
+    return img.crop((new_left, new_top, new_right, new_bottom))
+
+
 def resize_image(
     img: Image.Image,
     width: Optional[int] = None,
@@ -83,16 +102,24 @@ def apply_transforms(
     saturation: int = 0,
     noise: int = 0,
     perspective_corners: Optional[List[Tuple[float, float]]] = None,
+    crop: Optional[dict] = None,
 ) -> Image.Image:
     result = img.copy()
 
     if result.mode not in ("RGB", "RGBA"):
         result = result.convert("RGB")
 
+    if crop:
+        result = crop_edges(
+            result,
+            top=crop.get("top", 0),
+            bottom=crop.get("bottom", 0),
+            left=crop.get("left", 0),
+            right=crop.get("right", 0),
+        )
+
     if perspective_corners and len(perspective_corners) == 4:
         result = perspective_transform(result, perspective_corners)
-    elif width or height:
-        result = resize_image(result, width, height, keep_ratio)
 
     if rotation != 0:
         result = rotate_image(result, rotation)

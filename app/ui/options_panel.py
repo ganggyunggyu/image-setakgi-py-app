@@ -133,78 +133,121 @@ class RotationWidget(QWidget):
         self._spinbox.blockSignals(False)
 
 
-class SizeWidget(QWidget):
-    size_changed = Signal(int, int)
+class CropWidget(QWidget):
+    crop_changed = Signal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._original_w = 0
         self._original_h = 0
+        self._crop = {"top": 0, "bottom": 0, "left": 0, "right": 0}
         self._setup_ui()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        directions = [
+            ("top", "상"),
+            ("bottom", "하"),
+            ("left", "좌"),
+            ("right", "우"),
+        ]
+
+        self._spins = {}
+        for key, label_text in directions:
+            row = QHBoxLayout()
+            row.setSpacing(4)
+
+            label = QLabel(label_text)
+            label.setFixedWidth(20)
+            row.addWidget(label)
+
+            minus_btn = QPushButton("-")
+            minus_btn.setFixedSize(30, 26)
+            minus_btn.clicked.connect(lambda checked, k=key: self._adjust_crop(k, 1))
+            row.addWidget(minus_btn)
+
+            spin = QSpinBox()
+            spin.setRange(0, 1000)
+            spin.setValue(0)
+            spin.setSuffix(" px")
+            spin.setFixedWidth(70)
+            spin.valueChanged.connect(lambda val, k=key: self._on_spin_change(k, val))
+            self._spins[key] = spin
+            row.addWidget(spin)
+
+            plus_btn = QPushButton("+")
+            plus_btn.setFixedSize(30, 26)
+            plus_btn.clicked.connect(lambda checked, k=key: self._adjust_crop(k, -1))
+            row.addWidget(plus_btn)
+
+            row.addStretch()
+            layout.addLayout(row)
 
         size_row = QHBoxLayout()
-
-        self._width_label = QLabel("너비")
-        self._width_label.setFixedWidth(30)
-        size_row.addWidget(self._width_label)
-
-        self._width_spin = QSpinBox()
-        self._width_spin.setRange(1, 10000)
-        self._width_spin.setSuffix(" px")
-        self._width_spin.valueChanged.connect(self._on_width_change)
-        size_row.addWidget(self._width_spin)
-
-        self._height_label = QLabel("높이")
-        self._height_label.setFixedWidth(30)
-        size_row.addWidget(self._height_label)
-
-        self._height_spin = QSpinBox()
-        self._height_spin.setRange(1, 10000)
-        self._height_spin.setSuffix(" px")
-        self._height_spin.valueChanged.connect(self._on_height_change)
-        size_row.addWidget(self._height_spin)
-
+        self._size_label = QLabel("출력: 0 x 0")
+        self._size_label.setStyleSheet("color: #888; font-size: 11px;")
+        size_row.addWidget(self._size_label)
+        size_row.addStretch()
         layout.addLayout(size_row)
 
         reset_row = QHBoxLayout()
-        self._reset_btn = QPushButton("원본 크기로 복원")
+        self._reset_btn = QPushButton("크롭 초기화")
         self._reset_btn.clicked.connect(self._on_reset)
         reset_row.addWidget(self._reset_btn)
         layout.addLayout(reset_row)
 
-    def _on_width_change(self, value: int):
-        self.size_changed.emit(self._width_spin.value(), self._height_spin.value())
+    def _adjust_crop(self, direction: str, delta: int):
+        new_val = max(0, self._crop[direction] + delta)
+        self._crop[direction] = new_val
+        self._spins[direction].blockSignals(True)
+        self._spins[direction].setValue(new_val)
+        self._spins[direction].blockSignals(False)
+        self._update_size_label()
+        self.crop_changed.emit(self._crop.copy())
 
-    def _on_height_change(self, value: int):
-        self.size_changed.emit(self._width_spin.value(), self._height_spin.value())
+    def _on_spin_change(self, direction: str, value: int):
+        self._crop[direction] = value
+        self._update_size_label()
+        self.crop_changed.emit(self._crop.copy())
 
+    def _update_size_label(self):
+        if self._original_w > 0 and self._original_h > 0:
+            out_w = max(1, self._original_w - self._crop["left"] - self._crop["right"])
+            out_h = max(1, self._original_h - self._crop["top"] - self._crop["bottom"])
+            self._size_label.setText(f"출력: {out_w} x {out_h}")
 
     def _on_reset(self):
-        if self._original_w > 0 and self._original_h > 0:
-            self.set_size(self._original_w, self._original_h)
+        self._crop = {"top": 0, "bottom": 0, "left": 0, "right": 0}
+        for key, spin in self._spins.items():
+            spin.blockSignals(True)
+            spin.setValue(0)
+            spin.blockSignals(False)
+        self._update_size_label()
+        self.crop_changed.emit(self._crop.copy())
 
     def set_original_size(self, w: int, h: int):
         self._original_w = w
         self._original_h = h
+        self._update_size_label()
 
-    def set_size(self, w: int, h: int):
-        self._width_spin.blockSignals(True)
-        self._height_spin.blockSignals(True)
-        self._width_spin.setValue(w)
-        self._height_spin.setValue(h)
-        self._width_spin.blockSignals(False)
-        self._height_spin.blockSignals(False)
-        self.size_changed.emit(w, h)
+    def get_crop(self) -> dict:
+        return self._crop.copy()
 
-    def get_size(self) -> tuple[int, int]:
-        return self._width_spin.value(), self._height_spin.value()
+    def set_crop(self, crop: dict):
+        self._crop = crop.copy()
+        for key, spin in self._spins.items():
+            spin.blockSignals(True)
+            spin.setValue(self._crop.get(key, 0))
+            spin.blockSignals(False)
+        self._update_size_label()
 
-    def is_ratio_locked(self) -> bool:
-        return False
+    def get_output_size(self) -> tuple[int, int]:
+        out_w = max(1, self._original_w - self._crop["left"] - self._crop["right"])
+        out_h = max(1, self._original_h - self._crop["top"] - self._crop["bottom"])
+        return out_w, out_h
 
 
 class ExifPanel(QWidget):
@@ -288,6 +331,7 @@ class ExifPanel(QWidget):
 class OptionsPanel(QWidget):
     options_changed = Signal(dict)
     free_transform_toggled = Signal(bool)
+    reset_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -304,11 +348,11 @@ class OptionsPanel(QWidget):
         content = QWidget()
         layout = QVBoxLayout(content)
 
-        size_group = QGroupBox("크기 조절")
-        size_layout = QVBoxLayout(size_group)
-        self._size_widget = SizeWidget()
-        size_layout.addWidget(self._size_widget)
-        layout.addWidget(size_group)
+        crop_group = QGroupBox("크롭 (상하좌우)")
+        crop_layout = QVBoxLayout(crop_group)
+        self._crop_widget = CropWidget()
+        crop_layout.addWidget(self._crop_widget)
+        layout.addWidget(crop_group)
 
         transform_group = QGroupBox("변환")
         transform_layout = QVBoxLayout(transform_group)
@@ -341,6 +385,22 @@ class OptionsPanel(QWidget):
 
         layout.addStretch()
 
+        reset_all_btn = QPushButton("🔄 전체 초기화")
+        reset_all_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #ff5252;
+                color: white;
+                font-weight: bold;
+                padding: 10px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #ff1744;
+            }
+        """)
+        reset_all_btn.clicked.connect(self._reset_all_options)
+        layout.addWidget(reset_all_btn)
+
         scroll.setWidget(content)
 
         main_layout = QVBoxLayout(self)
@@ -348,7 +408,7 @@ class OptionsPanel(QWidget):
         main_layout.addWidget(scroll)
 
     def _connect_signals(self):
-        self._size_widget.size_changed.connect(self._emit_change)
+        self._crop_widget.crop_changed.connect(self._emit_change)
         self._rotation.value_changed.connect(self._emit_change)
         self._brightness.value_changed.connect(self._emit_change)
         self._contrast.value_changed.connect(self._emit_change)
@@ -363,13 +423,30 @@ class OptionsPanel(QWidget):
     def _emit_change(self, *args):
         self.options_changed.emit(self.get_options())
 
+    def _reset_all_options(self):
+        self._crop_widget._on_reset()
+        self._rotation.set_value(0.0)
+        self._brightness.set_value(0)
+        self._contrast.set_value(0)
+        self._saturation.set_value(0)
+        self._noise.set_value(0)
+        self._exif_panel.set_exif_options({
+            "remove_all": False,
+            "override": False,
+            "make": "",
+            "model": "",
+            "datetime": "",
+        })
+        self.reset_requested.emit()
+
     def get_options(self) -> dict:
-        w, h = self._size_widget.get_size()
+        w, h = self._crop_widget.get_output_size()
+        crop = self._crop_widget.get_crop()
         return {
             "width": w,
             "height": h,
-            "keep_ratio": self._size_widget.is_ratio_locked(),
-            "free_transform_mode": True,  # 항상 자유변형 모드
+            "crop": crop,
+            "free_transform_mode": True,
             "rotation": self._rotation.value(),
             "brightness": self._brightness.value(),
             "contrast": self._contrast.value(),
@@ -379,8 +456,8 @@ class OptionsPanel(QWidget):
         }
 
     def set_options(self, options: dict):
-        if "width" in options and "height" in options:
-            self._size_widget.set_size(options["width"], options["height"])
+        if "crop" in options:
+            self._crop_widget.set_crop(options["crop"])
         if "rotation" in options:
             self._rotation.set_value(options["rotation"])
         if "brightness" in options:
@@ -395,8 +472,5 @@ class OptionsPanel(QWidget):
             self._exif_panel.set_exif_options(options["exif"])
 
     def set_original_size(self, w: int, h: int):
-        self._size_widget.set_original_size(w, h)
-        self._size_widget.set_size(w, h)
-
-    def set_size_from_preview(self, w: int, h: int):
-        self._size_widget.set_size(w, h)
+        self._crop_widget.set_original_size(w, h)
+        self._crop_widget._on_reset()

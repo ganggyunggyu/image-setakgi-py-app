@@ -78,6 +78,7 @@ class PreviewWorker(QObject):
                 saturation=self._options.get("saturation", 0),
                 noise=self._options.get("noise", 0),
                 perspective_corners=perspective_corners,
+                crop_1px_enabled=self._options.get("crop_1px_enabled", False),
             )
 
             pixmap = pil_to_qpixmap(result)
