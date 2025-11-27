@@ -10,7 +10,7 @@ ROTATION_RANGE = 3
 NOISE_RANGE = 4.0
 
 # 자유변형(원근) 코너 오프셋 범위 (±px)
-PERSPECTIVE_RANGE = 1.6
+PERSPECTIVE_RANGE = 6
 
 # 날짜 랜덤 범위 (오늘 기준 며칠 전까지)
 DATE_DAYS_BACK = 7
