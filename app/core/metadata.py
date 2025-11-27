@@ -188,6 +188,38 @@ def save_png_with_metadata(
         img.save(output_path)
 
 
+def save_jpeg_with_metadata(
+    img: Image.Image,
+    output_path: str,
+    metadata_overrides: Optional[dict] = None,
+    quality: int = 75,
+):
+    """JPEG 파일을 EXIF 메타데이터와 함께 저장
+
+    Windows 탐색기 "촬영 날짜" = EXIF DateTimeOriginal
+    quality=75: 파일 크기 최소화 (원본 대비 25~40%)
+    """
+    # RGBA → RGB 변환 (JPEG는 투명도 지원 안 함)
+    if img.mode == "RGBA":
+        # 흰색 배경으로 합성
+        background = Image.new("RGB", img.size, (255, 255, 255))
+        background.paste(img, mask=img.split()[3])
+        img = background
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+
+    if metadata_overrides is not None and len(metadata_overrides) > 0:
+        exif_bytes = create_exif_bytes(metadata_overrides)
+        img.save(output_path, quality=quality, optimize=True, exif=exif_bytes)
+
+        # 파일 시스템 타임스탬프도 변경
+        dt_str = metadata_overrides.get("DateTimeOriginal") or metadata_overrides.get("datetime", "")
+        if dt_str:
+            set_file_times(output_path, dt_str)
+    else:
+        img.save(output_path, quality=quality, optimize=True)
+
+
 def set_file_times(filepath: str, datetime_str: str):
     """파일의 만든 날짜/수정한 날짜를 변경
 

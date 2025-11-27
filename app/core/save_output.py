@@ -2,7 +2,7 @@ from pathlib import Path
 from PIL import Image
 from typing import Optional
 
-from .metadata import save_png_with_metadata
+from .metadata import save_jpeg_with_metadata
 
 
 def create_output_folder(base_dir: str, options: dict = None) -> Path:
@@ -54,13 +54,13 @@ def create_output_folder(base_dir: str, options: dict = None) -> Path:
 
 
 def get_unique_filename(output_dir: Path, original_name: str) -> Path:
-    """무조건 PNG로 저장 - 원본 파일명 유지"""
+    """JPEG로 저장 - 원본 파일명 유지"""
     stem = Path(original_name).stem
-    candidate = output_dir / f"{stem}.png"
+    candidate = output_dir / f"{stem}.jpg"
 
     counter = 1
     while candidate.exists():
-        candidate = output_dir / f"{stem}_{counter}.png"
+        candidate = output_dir / f"{stem}_{counter}.jpg"
         counter += 1
 
     return candidate
@@ -72,9 +72,9 @@ def save_transformed_image(
     original_name: str,
     metadata_overrides: Optional[dict] = None,
 ) -> Path:
-    """PNG 전용 저장 - Creation Time 메타데이터 포함"""
+    """JPEG 저장 - EXIF DateTimeOriginal 메타데이터 포함"""
     output_path = get_unique_filename(output_dir, original_name)
-    save_png_with_metadata(img, str(output_path), metadata_overrides)
+    save_jpeg_with_metadata(img, str(output_path), metadata_overrides)
     return output_path
 
 
@@ -89,7 +89,7 @@ class OutputManager:
         original_name: str,
         metadata_overrides: Optional[dict] = None,
     ) -> Path:
-        """PNG로 저장 - metadata_overrides에 DateTimeOriginal 키로 날짜 전달"""
+        """JPEG로 저장 - metadata_overrides에 DateTimeOriginal 키로 날짜 전달"""
         path = save_transformed_image(
             img, self.output_dir, original_name, metadata_overrides
         )

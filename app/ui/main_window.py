@@ -13,8 +13,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QApplication,
 )
-from PySide6.QtCore import Qt, Signal, QThreadPool, QRunnable, QObject, QUrl
-from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent, QPixmap, QDesktopServices
+from PySide6.QtCore import Qt, Signal, QThreadPool, QRunnable, QObject
+from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent, QPixmap
 from PIL import Image
 from pathlib import Path
 from typing import Optional
@@ -83,14 +83,13 @@ class TransformWorker(QRunnable):
                 crop=self.options.get("crop"),
             )
 
-            # PNG 메타데이터 처리 (Creation Time만 Windows에서 인식)
+            # JPEG EXIF 메타데이터 처리 (DateTimeOriginal = Windows 촬영날짜)
             exif_opts = self.options.get("exif", {})
             metadata_overrides = None
 
             if exif_opts.get("remove_all"):
                 result = remove_exif(result)
             elif exif_opts.get("override"):
-                # DateTimeOriginal → PNG Creation Time으로 변환됨
                 # datetime이 없으면 현재 시간 사용
                 from datetime import datetime as dt
                 datetime_val = exif_opts.get("datetime", "")
@@ -239,14 +238,19 @@ class MainWindow(QMainWindow):
         self._file_list = FileListWidget()
         left_layout.addWidget(self._file_list)
 
-        btn_layout = QHBoxLayout()
+        btn_layout1 = QHBoxLayout()
         self._add_btn = QPushButton("파일 추가")
+        self._add_folder_btn = QPushButton("폴더 추가")
+        btn_layout1.addWidget(self._add_btn)
+        btn_layout1.addWidget(self._add_folder_btn)
+        left_layout.addLayout(btn_layout1)
+
+        btn_layout2 = QHBoxLayout()
         self._remove_btn = QPushButton("선택 제거")
         self._clear_btn = QPushButton("전체 제거")
-        btn_layout.addWidget(self._add_btn)
-        btn_layout.addWidget(self._remove_btn)
-        btn_layout.addWidget(self._clear_btn)
-        left_layout.addLayout(btn_layout)
+        btn_layout2.addWidget(self._remove_btn)
+        btn_layout2.addWidget(self._clear_btn)
+        left_layout.addLayout(btn_layout2)
 
         splitter.addWidget(left_panel)
 
@@ -306,6 +310,7 @@ class MainWindow(QMainWindow):
         self._file_list.currentRowChanged.connect(self._on_file_selected)
 
         self._add_btn.clicked.connect(self._open_file_dialog)
+        self._add_folder_btn.clicked.connect(self._open_folder_dialog)
         self._remove_btn.clicked.connect(self._remove_selected)
         self._clear_btn.clicked.connect(self._clear_files)
 
@@ -407,6 +412,13 @@ class MainWindow(QMainWindow):
         if self._files:
             self._file_list.setCurrentRow(0)
 
+        # 새로 추가된 파일의 디렉토리를 출력 폴더로 자동 설정
+        if files:
+            output_dir = str(Path(files[0]).parent)
+            self._config["last_output_dir"] = output_dir
+            save_config(self._config)
+            self._output_path_label.setText(f"출력 폴더: {output_dir}")
+
     def _open_file_dialog(self):
         files, _ = QFileDialog.getOpenFileNames(
             self,
@@ -418,6 +430,31 @@ class MainWindow(QMainWindow):
             self._config["last_input_dir"] = str(Path(files[0]).parent)
             save_config(self._config)
             self._add_files(files)
+
+    def _open_folder_dialog(self):
+        """폴더 선택 → 내부 이미지 파일 자동 추가"""
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "이미지 폴더 선택",
+            self._config.get("last_input_dir", ""),
+        )
+        if folder:
+            self._config["last_input_dir"] = folder
+            save_config(self._config)
+
+            # 폴더 내 이미지 파일 검색
+            image_extensions = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+            folder_path = Path(folder)
+            files = [
+                str(f) for f in folder_path.iterdir()
+                if f.is_file() and f.suffix.lower() in image_extensions
+            ]
+
+            if files:
+                files.sort()  # 파일명 순 정렬
+                self._add_files(files)
+            else:
+                QMessageBox.information(self, "알림", "폴더에 이미지 파일이 없습니다.")
 
     def _remove_selected(self):
         row = self._file_list.currentRow()
@@ -626,9 +663,9 @@ class MainWindow(QMainWindow):
                 f"변환 완료: 성공 {self._completed}개, 실패 {len(self._failed)}개", "info"
             )
 
-            # 출력 폴더 자동 열기
-            output_dir = self._output_manager.get_output_dir()
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_dir)))
+            # 출력 폴더 자동 열기 (주석처리)
+            # output_dir = self._output_manager.get_output_dir()
+            # QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_dir)))
 
     def _start_random_conversion(self):
         """랜덤 변형 실행 - 각 이미지에 다른 랜덤 값 적용"""
