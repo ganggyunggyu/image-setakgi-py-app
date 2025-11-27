@@ -54,14 +54,13 @@ def create_output_folder(base_dir: str, options: dict = None) -> Path:
 
 
 def get_unique_filename(output_dir: Path, original_name: str) -> Path:
-    """무조건 PNG로 저장 - 파일명만 고유하게 생성"""
+    """무조건 PNG로 저장 - 원본 파일명 유지"""
     stem = Path(original_name).stem
-    base_name = f"{stem}_mod"
-    candidate = output_dir / f"{base_name}.png"
+    candidate = output_dir / f"{stem}.png"
 
     counter = 1
     while candidate.exists():
-        candidate = output_dir / f"{base_name}_{counter}.png"
+        candidate = output_dir / f"{stem}_{counter}.png"
         counter += 1
 
     return candidate

@@ -91,10 +91,13 @@ class TransformWorker(QRunnable):
                 result = remove_exif(result)
             elif exif_opts.get("override"):
                 # DateTimeOriginal → PNG Creation Time으로 변환됨
-                metadata_overrides = {
-                    "DateTimeOriginal": exif_opts.get("datetime", ""),
-                }
-                metadata_overrides = {k: v for k, v in metadata_overrides.items() if v}
+                # datetime이 없으면 현재 시간 사용
+                from datetime import datetime as dt
+                datetime_val = exif_opts.get("datetime", "")
+                if not datetime_val:
+                    datetime_val = dt.now().strftime("%Y:%m:%d %H:%M:%S")
+
+                metadata_overrides = {"DateTimeOriginal": datetime_val}
                 result = remove_exif(result)
 
             filename = Path(self.filepath).name
@@ -191,6 +194,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Image Setakgi - 이미지 세탁기")
         self.setMinimumSize(1200, 800)
+
+        # Windows 드래그앤 드랍 지원 - MainWindow 레벨
+        self.setAcceptDrops(True)
 
         self._files: list[str] = []
         self._current_file: Optional[str] = None
@@ -686,6 +692,42 @@ class MainWindow(QMainWindow):
                 self._failed.append((filepath, str(e)))
 
         self._output_manager = output_manager
+
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        """Windows 드래그앤 드랍 - MainWindow 레벨 지원"""
+        if event.mimeData().hasUrls():
+            self._file_list.setStyleSheet(self._file_list.STYLE_DRAG_OVER)
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event: QDragLeaveEvent):
+        self._file_list.setStyleSheet(self._file_list.STYLE_NORMAL)
+        event.accept()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event: QDropEvent):
+        """드롭 이벤트 처리 - FileListWidget에 전달"""
+        self._file_list.setStyleSheet(self._file_list.STYLE_NORMAL)
+        files = []
+        for url in event.mimeData().urls():
+            path = url.toLocalFile()
+            if path and path.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp")):
+                files.append(path)
+
+        if files:
+            self._add_files(files)
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
+        else:
+            event.ignore()
 
     def closeEvent(self, event):
         save_config(self._config)

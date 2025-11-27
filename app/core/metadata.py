@@ -173,7 +173,8 @@ def save_png_with_metadata(
     metadata_overrides: Optional[dict] = None,
 ):
     """PNG 파일을 메타데이터와 함께 저장"""
-    if metadata_overrides:
+    # None이 아니고 빈 딕셔너리가 아닐 때만 메타데이터 적용
+    if metadata_overrides is not None and len(metadata_overrides) > 0:
         png_info = create_png_metadata(metadata_overrides)
         img.save(output_path, pnginfo=png_info)
     else:
