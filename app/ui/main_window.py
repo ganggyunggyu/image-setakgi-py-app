@@ -175,12 +175,25 @@ class FileListWidget(QListWidget):
     def dropEvent(self, event: QDropEvent):
         self.setStyleSheet(self.STYLE_NORMAL)
         files = []
+        image_extensions = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+
         for url in event.mimeData().urls():
             path = url.toLocalFile()
-            if path and path.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp")):
+            if not path:
+                continue
+
+            p = Path(path)
+            # 폴더인 경우 내부 이미지 파일 추가
+            if p.is_dir():
+                for f in p.iterdir():
+                    if f.is_file() and f.suffix.lower() in image_extensions:
+                        files.append(str(f))
+            # 이미지 파일인 경우
+            elif p.suffix.lower() in image_extensions:
                 files.append(path)
 
         if files:
+            files.sort()
             self.files_dropped.emit(files)
             event.setDropAction(Qt.DropAction.CopyAction)
             event.accept()
@@ -750,15 +763,28 @@ class MainWindow(QMainWindow):
             event.ignore()
 
     def dropEvent(self, event: QDropEvent):
-        """드롭 이벤트 처리 - FileListWidget에 전달"""
+        """드롭 이벤트 처리 - 파일/폴더 모두 지원"""
         self._file_list.setStyleSheet(self._file_list.STYLE_NORMAL)
         files = []
+        image_extensions = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+
         for url in event.mimeData().urls():
             path = url.toLocalFile()
-            if path and path.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp")):
+            if not path:
+                continue
+
+            p = Path(path)
+            # 폴더인 경우 내부 이미지 파일 추가
+            if p.is_dir():
+                for f in p.iterdir():
+                    if f.is_file() and f.suffix.lower() in image_extensions:
+                        files.append(str(f))
+            # 이미지 파일인 경우
+            elif p.suffix.lower() in image_extensions:
                 files.append(path)
 
         if files:
+            files.sort()
             self._add_files(files)
             event.setDropAction(Qt.DropAction.CopyAction)
             event.accept()
