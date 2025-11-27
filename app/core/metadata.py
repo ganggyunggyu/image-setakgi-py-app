@@ -1,5 +1,6 @@
 import piexif
 from PIL import Image
+from PIL.PngImagePlugin import PngInfo
 from typing import Optional
 from datetime import datetime
 import random
@@ -118,3 +119,49 @@ def save_with_exif(
         img.save(output_path, quality=quality, exif=exif_bytes)
     else:
         img.save(output_path, quality=quality)
+
+
+def create_png_metadata(overrides: dict) -> PngInfo:
+    """PNG용 tEXt 청크 메타데이터 생성"""
+    metadata = PngInfo()
+
+    # Windows가 인식하는 PNG 메타데이터 키
+    # Creation Time: Windows "Date taken" 에 표시됨
+    if "DateTimeOriginal" in overrides or "datetime" in overrides:
+        dt_str = overrides.get("DateTimeOriginal") or overrides.get("datetime", "")
+        if dt_str:
+            # EXIF 형식(2024:01:01 12:00:00)을 ISO 형식으로 변환
+            try:
+                dt = datetime.strptime(dt_str, "%Y:%m:%d %H:%M:%S")
+                # Windows PNG Creation Time 형식
+                metadata.add_text("Creation Time", dt.strftime("%Y-%m-%dT%H:%M:%S"))
+            except ValueError:
+                metadata.add_text("Creation Time", dt_str)
+
+    if "Make" in overrides or "make" in overrides:
+        make = overrides.get("Make") or overrides.get("make", "")
+        if make:
+            metadata.add_text("Source", make)
+
+    if "Model" in overrides or "model" in overrides:
+        model = overrides.get("Model") or overrides.get("model", "")
+        if model:
+            metadata.add_text("Comment", model)
+
+    if "Software" in overrides:
+        metadata.add_text("Software", overrides["Software"])
+
+    return metadata
+
+
+def save_png_with_metadata(
+    img: Image.Image,
+    output_path: str,
+    metadata_overrides: Optional[dict] = None,
+):
+    """PNG 파일을 메타데이터와 함께 저장"""
+    if metadata_overrides:
+        png_info = create_png_metadata(metadata_overrides)
+        img.save(output_path, pnginfo=png_info)
+    else:
+        img.save(output_path)

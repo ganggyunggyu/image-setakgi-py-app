@@ -90,6 +90,7 @@ class TransformWorker(QRunnable):
 
             exif_opts = self.options.get("exif", {})
             exif_bytes = None
+            metadata_overrides = None
 
             if exif_opts.get("remove_all"):
                 result = remove_exif(result)
@@ -102,10 +103,11 @@ class TransformWorker(QRunnable):
                 override_data = {k: v for k, v in override_data.items() if v}
                 if override_data:
                     exif_bytes = create_exif_bytes(override_data)
+                    metadata_overrides = override_data  # PNG용 메타데이터
                 result = remove_exif(result)
 
             filename = Path(self.filepath).name
-            output_path = self.output_manager.save(result, filename, exif_bytes)
+            output_path = self.output_manager.save(result, filename, exif_bytes, metadata_overrides)
 
             metadata_actions = []
             if exif_opts.get("remove_all"):
