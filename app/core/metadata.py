@@ -6,16 +6,25 @@ from datetime import datetime
 import random
 
 
+# Windows 속성 "자세히" 탭 매핑:
+# - JPG: Windows 'Date taken' = EXIF DateTimeOriginal
+# - PNG: Windows 'Date taken' = PNG tEXt chunk 'Creation Time'
+# - NTFS '만든 날짜/수정한 날짜'는 파일 시스템 타임스탬프 (여기서 안 건드림)
+#
+# 날짜 포맷: "YYYY:MM:DD HH:MM:SS" (예: "2025:11:27 14:30:00")
+
 READABLE_TAGS = {
-    "DateTime": (piexif.ExifIFD.DateTimeOriginal, "0th"),
-    "Make": (piexif.ImageIFD.Make, "0th"),
-    "Model": (piexif.ImageIFD.Model, "0th"),
-    "Software": (piexif.ImageIFD.Software, "0th"),
-    "Artist": (piexif.ImageIFD.Artist, "0th"),
-    "Copyright": (piexif.ImageIFD.Copyright, "0th"),
-    "ImageDescription": (piexif.ImageIFD.ImageDescription, "0th"),
-    "DateTimeOriginal": (piexif.ExifIFD.DateTimeOriginal, "Exif"),
-    "DateTimeDigitized": (piexif.ExifIFD.DateTimeDigitized, "Exif"),
+    # 0th IFD (ImageIFD) - 기본 이미지 정보
+    "DateTime": (piexif.ImageIFD.DateTime, "0th"),  # 파일 수정 시간
+    "Make": (piexif.ImageIFD.Make, "0th"),  # → Windows "카메라 제조업체"
+    "Model": (piexif.ImageIFD.Model, "0th"),  # → Windows "카메라 모델"
+    "Software": (piexif.ImageIFD.Software, "0th"),  # → Windows "프로그램 이름"
+    "Artist": (piexif.ImageIFD.Artist, "0th"),  # → Windows "작성자"
+    "Copyright": (piexif.ImageIFD.Copyright, "0th"),  # → Windows "저작권"
+    "ImageDescription": (piexif.ImageIFD.ImageDescription, "0th"),  # → Windows "제목"
+    # Exif IFD - 촬영 정보
+    "DateTimeOriginal": (piexif.ExifIFD.DateTimeOriginal, "Exif"),  # → Windows "촬영 날짜" ⭐
+    "DateTimeDigitized": (piexif.ExifIFD.DateTimeDigitized, "Exif"),  # 디지털화 시간
     "ExposureTime": (piexif.ExifIFD.ExposureTime, "Exif"),
     "FNumber": (piexif.ExifIFD.FNumber, "Exif"),
     "ISOSpeedRatings": (piexif.ExifIFD.ISOSpeedRatings, "Exif"),
@@ -122,11 +131,15 @@ def save_with_exif(
 
 
 def create_png_metadata(overrides: dict) -> PngInfo:
-    """PNG용 tEXt 청크 메타데이터 생성"""
+    """PNG용 tEXt 청크 메타데이터 생성
+
+    Windows 탐색기는 PNG의 대부분 메타데이터를 무시하고,
+    오직 'Creation Time' 텍스트 청크만 읽어서 "촬영 날짜(Date taken)"에 표시함.
+    Make/Model/Software는 PNG에 넣어도 Windows에서 안 보임 (ExifTool 등에서는 보임)
+    """
     metadata = PngInfo()
 
-    # Windows가 인식하는 PNG 메타데이터 키
-    # Creation Time: Windows "Date taken" 에 표시됨
+    # Windows "촬영 날짜(Date taken)" = PNG:CreationTime
     if "DateTimeOriginal" in overrides or "datetime" in overrides:
         dt_str = overrides.get("DateTimeOriginal") or overrides.get("datetime", "")
         if dt_str:

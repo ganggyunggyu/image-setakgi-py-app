@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QApplication,
 )
 from PySide6.QtCore import Qt, Signal, QThreadPool, QRunnable, QObject
-from PySide6.QtGui import QDragEnterEvent, QDropEvent, QPixmap
+from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent, QPixmap
 from PIL import Image
 from pathlib import Path
 from typing import Optional
@@ -24,12 +24,7 @@ from .options_panel import OptionsPanel
 from .log_widget import LogWidget
 from app.core.preview import PreviewThread, pil_to_qpixmap, create_thumbnail, MAX_PREVIEW_SIZE
 from app.core.image_ops import apply_transforms
-from app.core.metadata import (
-    read_exif,
-    remove_exif,
-    create_exif_bytes,
-    apply_exif_overrides,
-)
+from app.core.metadata import remove_exif
 from app.core.transform_history import record_transform
 from app.core.save_output import OutputManager
 from app.core.config import load_config, save_config
@@ -88,26 +83,22 @@ class TransformWorker(QRunnable):
                 crop=self.options.get("crop"),
             )
 
+            # PNG 메타데이터 처리 (Creation Time만 Windows에서 인식)
             exif_opts = self.options.get("exif", {})
-            exif_bytes = None
             metadata_overrides = None
 
             if exif_opts.get("remove_all"):
                 result = remove_exif(result)
             elif exif_opts.get("override"):
-                override_data = {
-                    "Make": exif_opts.get("make", ""),
-                    "Model": exif_opts.get("model", ""),
+                # DateTimeOriginal → PNG Creation Time으로 변환됨
+                metadata_overrides = {
                     "DateTimeOriginal": exif_opts.get("datetime", ""),
                 }
-                override_data = {k: v for k, v in override_data.items() if v}
-                if override_data:
-                    exif_bytes = create_exif_bytes(override_data)
-                    metadata_overrides = override_data  # PNG용 메타데이터
+                metadata_overrides = {k: v for k, v in metadata_overrides.items() if v}
                 result = remove_exif(result)
 
             filename = Path(self.filepath).name
-            output_path = self.output_manager.save(result, filename, exif_bytes, metadata_overrides)
+            output_path = self.output_manager.save(result, filename, metadata_overrides)
 
             metadata_actions = []
             if exif_opts.get("remove_all"):
@@ -136,30 +127,63 @@ class TransformWorker(QRunnable):
 class FileListWidget(QListWidget):
     files_dropped = Signal(list)
 
+    STYLE_NORMAL = """
+        QListWidget {
+            background-color: #3d3d3d;
+            border: 2px solid #555;
+            border-radius: 4px;
+        }
+    """
+    STYLE_DRAG_OVER = """
+        QListWidget {
+            background-color: #3d4d5d;
+            border: 2px dashed #4285f4;
+            border-radius: 4px;
+        }
+    """
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self.setDragEnabled(False)
+        self.setDragDropMode(QListWidget.DragDropMode.DropOnly)
+        self.setDefaultDropAction(Qt.DropAction.CopyAction)
         self.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self.setStyleSheet(self.STYLE_NORMAL)
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
-            event.acceptProposedAction()
+            self.setStyleSheet(self.STYLE_DRAG_OVER)
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event: QDragLeaveEvent):
+        self.setStyleSheet(self.STYLE_NORMAL)
+        event.accept()
 
     def dragMoveEvent(self, event):
         if event.mimeData().hasUrls():
-            event.acceptProposedAction()
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
+        else:
+            event.ignore()
 
     def dropEvent(self, event: QDropEvent):
+        self.setStyleSheet(self.STYLE_NORMAL)
         files = []
         for url in event.mimeData().urls():
             path = url.toLocalFile()
-            if path.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp")):
+            if path and path.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp")):
                 files.append(path)
 
         if files:
             self.files_dropped.emit(files)
-            event.acceptProposedAction()
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
+        else:
+            event.ignore()
 
 
 class MainWindow(QMainWindow):
@@ -360,6 +384,13 @@ class MainWindow(QMainWindow):
         )
 
     def _add_files(self, files: list[str]):
+        # 기존 파일 모두 제거
+        self._file_list.clear()
+        self._files.clear()
+        self._current_file = None
+        self._current_image = None
+
+        # 새 파일만 추가
         for f in files:
             if f not in self._files:
                 self._files.append(f)
@@ -367,7 +398,7 @@ class MainWindow(QMainWindow):
                 item.setData(Qt.ItemDataRole.UserRole, f)
                 self._file_list.addItem(item)
 
-        if self._files and self._current_file is None:
+        if self._files:
             self._file_list.setCurrentRow(0)
 
     def _open_file_dialog(self):

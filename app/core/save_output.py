@@ -1,9 +1,8 @@
 from pathlib import Path
-from datetime import datetime
 from PIL import Image
 from typing import Optional
 
-from .metadata import save_with_exif, remove_exif, create_exif_bytes, save_png_with_metadata
+from .metadata import save_png_with_metadata
 
 
 def create_output_folder(base_dir: str, options: dict = None) -> Path:
@@ -55,18 +54,14 @@ def create_output_folder(base_dir: str, options: dict = None) -> Path:
 
 
 def get_unique_filename(output_dir: Path, original_name: str) -> Path:
+    """무조건 PNG로 저장 - 파일명만 고유하게 생성"""
     stem = Path(original_name).stem
-    suffix = Path(original_name).suffix.lower()
-
-    if suffix not in [".jpg", ".jpeg", ".png", ".webp", ".bmp"]:
-        suffix = ".jpg"
-
     base_name = f"{stem}_mod"
-    candidate = output_dir / f"{base_name}{suffix}"
+    candidate = output_dir / f"{base_name}.png"
 
     counter = 1
     while candidate.exists():
-        candidate = output_dir / f"{base_name}_{counter}{suffix}"
+        candidate = output_dir / f"{base_name}_{counter}.png"
         counter += 1
 
     return candidate
@@ -76,27 +71,11 @@ def save_transformed_image(
     img: Image.Image,
     output_dir: Path,
     original_name: str,
-    exif_bytes: Optional[bytes] = None,
     metadata_overrides: Optional[dict] = None,
-    quality: int = 95,
 ) -> Path:
-    # RGBA 이미지는 투명도 보존을 위해 PNG로 저장
-    if img.mode == "RGBA":
-        stem = Path(original_name).stem
-        original_name = f"{stem}.png"
-
+    """PNG 전용 저장 - Creation Time 메타데이터 포함"""
     output_path = get_unique_filename(output_dir, original_name)
-    suffix = output_path.suffix.lower()
-
-    if suffix in [".png"]:
-        # PNG: tEXt 청크로 메타데이터 저장
-        save_png_with_metadata(img, str(output_path), metadata_overrides)
-    elif suffix in [".jpg", ".jpeg"] and exif_bytes:
-        # JPEG: EXIF로 메타데이터 저장
-        save_with_exif(img, str(output_path), exif_bytes, quality)
-    else:
-        img.save(str(output_path), quality=quality)
-
+    save_png_with_metadata(img, str(output_path), metadata_overrides)
     return output_path
 
 
@@ -109,12 +88,11 @@ class OutputManager:
         self,
         img: Image.Image,
         original_name: str,
-        exif_bytes: Optional[bytes] = None,
         metadata_overrides: Optional[dict] = None,
-        quality: int = 95,
     ) -> Path:
+        """PNG로 저장 - metadata_overrides에 DateTimeOriginal 키로 날짜 전달"""
         path = save_transformed_image(
-            img, self.output_dir, original_name, exif_bytes, metadata_overrides, quality
+            img, self.output_dir, original_name, metadata_overrides
         )
         self.saved_files.append(path)
         return path
