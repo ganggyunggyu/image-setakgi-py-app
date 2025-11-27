@@ -224,7 +224,6 @@ class MainWindow(QMainWindow):
         self._output_manager: Optional[OutputManager] = None
         self._workers: list = []
         self._random_mode = False
-        self._random_config = RandomTransformConfig()
 
         self._setup_ui()
         self._connect_signals()
@@ -710,6 +709,16 @@ class MainWindow(QMainWindow):
         random_folder_options = {"random": True}
         output_manager = OutputManager(output_dir, random_folder_options)
 
+        # UI에서 랜덤 설정값 가져오기
+        random_cfg = self._options.get_random_config()
+        random_config = RandomTransformConfig(
+            crop_range=random_cfg.get("crop_range", 6.0),
+            rotation_range=random_cfg.get("rotation_range", 3.0),
+            noise_range=random_cfg.get("noise_range", 4.0),
+            perspective_range=random_cfg.get("perspective_range", 1.6),
+            date_days_back=random_cfg.get("date_days_back", 7),
+        )
+
         for filepath in self._files:
             try:
                 img = Image.open(filepath)
@@ -723,7 +732,7 @@ class MainWindow(QMainWindow):
 
                 # 각 이미지별로 새로운 랜덤 옵션 생성 (thumbnail 좌표 기준)
                 random_options = generate_random_options(
-                    self._random_config, thumb_w, thumb_h,
+                    random_config, thumb_w, thumb_h,
                     include_perspective=True,
                     include_date=True,
                 )
