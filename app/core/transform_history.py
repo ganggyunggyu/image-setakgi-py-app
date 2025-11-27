@@ -1,9 +1,11 @@
 import json
+import threading
 from pathlib import Path
 from datetime import datetime
 from typing import Any, Optional
 
 HISTORY_FILE = Path.home() / ".image_setakgi" / "transform_history.json"
+_history_lock = threading.Lock()
 
 
 def ensure_history_dir():
@@ -13,8 +15,11 @@ def ensure_history_dir():
 def load_history() -> dict[str, Any]:
     ensure_history_dir()
     if HISTORY_FILE.exists():
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, Exception):
+            return {}
     return {}
 
 
@@ -34,21 +39,22 @@ def record_transform(
     noise: int = 0,
     metadata_actions: Optional[list] = None,
 ):
-    history = load_history()
+    with _history_lock:
+        history = load_history()
 
-    record = {
-        "crop": crop or {},
-        "rotation": rotation,
-        "brightness": brightness,
-        "contrast": contrast,
-        "saturation": saturation,
-        "noise": noise,
-        "metadataActions": metadata_actions or [],
-        "timestamp": datetime.now().isoformat(),
-    }
+        record = {
+            "crop": crop or {},
+            "rotation": rotation,
+            "brightness": brightness,
+            "contrast": contrast,
+            "saturation": saturation,
+            "noise": noise,
+            "metadataActions": metadata_actions or [],
+            "timestamp": datetime.now().isoformat(),
+        }
 
-    history[filename] = record
-    save_history(history)
+        history[filename] = record
+        save_history(history)
 
 
 def get_file_history(filename: str) -> Optional[dict]:
