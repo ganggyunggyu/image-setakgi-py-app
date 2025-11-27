@@ -22,9 +22,9 @@ def generate_random_rotation(max_range: float = ROTATION_RANGE) -> float:
     return round(random.uniform(-max_range, max_range), 1)
 
 
-def generate_random_noise(max_range: float = NOISE_RANGE) -> int:
-    """0~max_range 범위 내에서 랜덤 노이즈 값 생성"""
-    return round(random.uniform(0, max_range))
+def generate_random_noise(max_range: float = NOISE_RANGE) -> float:
+    """0~max_range 범위 내에서 랜덤 노이즈 값 생성 (소수점 1자리)"""
+    return round(random.uniform(0, max_range), 1)
 
 
 def generate_random_perspective(
@@ -124,7 +124,7 @@ def format_random_log(filename: str, options: dict) -> str:
     parts = [f"[{filename}]"]
     parts.append(f"크롭:{crop:+d}px")
     parts.append(f"회전:{rotation:+.1f}°")
-    parts.append(f"노이즈:{noise}")
+    parts.append(f"노이즈:{noise:.1f}")
 
     perspective = options.get("perspective_corners")
     if perspective:
