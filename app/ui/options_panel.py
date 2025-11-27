@@ -16,6 +16,14 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal
 
+from app.core.random_config import (
+    CROP_RANGE,
+    ROTATION_RANGE,
+    NOISE_RANGE,
+    PERSPECTIVE_RANGE,
+    DATE_DAYS_BACK,
+)
+
 
 class SliderWithSpinBox(QWidget):
     value_changed = Signal(int)
@@ -313,13 +321,6 @@ class RandomConfigPanel(QWidget):
     """랜덤 변환 설정 패널"""
     config_changed = Signal(dict)
 
-    # 기본값 (random_config.py와 동일)
-    DEFAULT_CROP_RANGE = 6.0
-    DEFAULT_ROTATION_RANGE = 3.0
-    DEFAULT_NOISE_RANGE = 4.0
-    DEFAULT_PERSPECTIVE_RANGE = 1.6
-    DEFAULT_DATE_DAYS_BACK = 7
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self._setup_ui()
@@ -336,7 +337,7 @@ class RandomConfigPanel(QWidget):
         crop_row.addWidget(crop_label)
         self._crop_spin = QDoubleSpinBox()
         self._crop_spin.setRange(0, 50)
-        self._crop_spin.setValue(self.DEFAULT_CROP_RANGE)
+        self._crop_spin.setValue(CROP_RANGE)
         self._crop_spin.setSuffix(" px")
         self._crop_spin.setDecimals(1)
         self._crop_spin.valueChanged.connect(self._on_change)
@@ -351,7 +352,7 @@ class RandomConfigPanel(QWidget):
         rotation_row.addWidget(rotation_label)
         self._rotation_spin = QDoubleSpinBox()
         self._rotation_spin.setRange(0, 180)
-        self._rotation_spin.setValue(self.DEFAULT_ROTATION_RANGE)
+        self._rotation_spin.setValue(ROTATION_RANGE)
         self._rotation_spin.setSuffix(" °")
         self._rotation_spin.setDecimals(1)
         self._rotation_spin.valueChanged.connect(self._on_change)
@@ -366,7 +367,7 @@ class RandomConfigPanel(QWidget):
         noise_row.addWidget(noise_label)
         self._noise_spin = QDoubleSpinBox()
         self._noise_spin.setRange(0, 50)
-        self._noise_spin.setValue(self.DEFAULT_NOISE_RANGE)
+        self._noise_spin.setValue(NOISE_RANGE)
         self._noise_spin.setDecimals(1)
         self._noise_spin.valueChanged.connect(self._on_change)
         noise_row.addWidget(self._noise_spin)
@@ -380,7 +381,7 @@ class RandomConfigPanel(QWidget):
         perspective_row.addWidget(perspective_label)
         self._perspective_spin = QDoubleSpinBox()
         self._perspective_spin.setRange(0, 20)
-        self._perspective_spin.setValue(self.DEFAULT_PERSPECTIVE_RANGE)
+        self._perspective_spin.setValue(PERSPECTIVE_RANGE)
         self._perspective_spin.setSuffix(" px")
         self._perspective_spin.setDecimals(1)
         self._perspective_spin.valueChanged.connect(self._on_change)
@@ -395,7 +396,7 @@ class RandomConfigPanel(QWidget):
         date_row.addWidget(date_label)
         self._date_spin = QSpinBox()
         self._date_spin.setRange(1, 365)
-        self._date_spin.setValue(self.DEFAULT_DATE_DAYS_BACK)
+        self._date_spin.setValue(DATE_DAYS_BACK)
         self._date_spin.setSuffix(" 일")
         self._date_spin.valueChanged.connect(self._on_change)
         date_row.addWidget(self._date_spin)
@@ -411,11 +412,11 @@ class RandomConfigPanel(QWidget):
         self.config_changed.emit(self.get_config())
 
     def _reset_to_default(self):
-        self._crop_spin.setValue(self.DEFAULT_CROP_RANGE)
-        self._rotation_spin.setValue(self.DEFAULT_ROTATION_RANGE)
-        self._noise_spin.setValue(self.DEFAULT_NOISE_RANGE)
-        self._perspective_spin.setValue(self.DEFAULT_PERSPECTIVE_RANGE)
-        self._date_spin.setValue(self.DEFAULT_DATE_DAYS_BACK)
+        self._crop_spin.setValue(CROP_RANGE)
+        self._rotation_spin.setValue(ROTATION_RANGE)
+        self._noise_spin.setValue(NOISE_RANGE)
+        self._perspective_spin.setValue(PERSPECTIVE_RANGE)
+        self._date_spin.setValue(DATE_DAYS_BACK)
 
     def get_config(self) -> dict:
         return {
