@@ -4,12 +4,14 @@ from PIL.PngImagePlugin import PngInfo
 from typing import Optional
 from datetime import datetime
 import random
+import os
+import platform
 
 
 # Windows 속성 "자세히" 탭 매핑:
 # - JPG: Windows 'Date taken' = EXIF DateTimeOriginal
 # - PNG: Windows 'Date taken' = PNG tEXt chunk 'Creation Time'
-# - NTFS '만든 날짜/수정한 날짜'는 파일 시스템 타임스탬프 (여기서 안 건드림)
+# - NTFS '만든 날짜/수정한 날짜' = 파일 시스템 타임스탬프 (set_file_times로 변경 가능)
 #
 # 날짜 포맷: "YYYY:MM:DD HH:MM:SS" (예: "2025:11:27 14:30:00")
 
@@ -177,5 +179,107 @@ def save_png_with_metadata(
     if metadata_overrides is not None and len(metadata_overrides) > 0:
         png_info = create_png_metadata(metadata_overrides)
         img.save(output_path, pnginfo=png_info)
+
+        # 파일 시스템 타임스탬프도 변경
+        dt_str = metadata_overrides.get("DateTimeOriginal") or metadata_overrides.get("datetime", "")
+        if dt_str:
+            set_file_times(output_path, dt_str)
     else:
         img.save(output_path)
+
+
+def set_file_times(filepath: str, datetime_str: str):
+    """파일의 만든 날짜/수정한 날짜를 변경
+
+    - Windows: 만든 날짜 + 수정한 날짜 모두 변경
+    - macOS/Linux: 수정한 날짜만 변경 (만든 날짜는 OS 제한)
+    """
+    try:
+        # EXIF 형식 파싱
+        dt = datetime.strptime(datetime_str, "%Y:%m:%d %H:%M:%S")
+        timestamp = dt.timestamp()
+
+        # 수정 날짜 변경 (모든 플랫폼)
+        os.utime(filepath, (timestamp, timestamp))
+
+        # Windows: 만든 날짜도 변경
+        if platform.system() == "Windows":
+            _set_windows_file_times(filepath, timestamp)
+
+    except ValueError:
+        pass  # 날짜 파싱 실패
+
+
+def _set_windows_file_times(filepath: str, timestamp: float):
+    """Windows 전용: 만든 날짜/수정한 날짜/접근한 날짜 모두 변경"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        # FILETIME 구조체
+        class FILETIME(ctypes.Structure):
+            _fields_ = [("dwLowDateTime", wintypes.DWORD),
+                        ("dwHighDateTime", wintypes.DWORD)]
+
+        # Windows API 상수
+        GENERIC_WRITE = 0x40000000
+        FILE_SHARE_READ = 0x1
+        FILE_SHARE_WRITE = 0x2
+        OPEN_EXISTING = 3
+        FILE_ATTRIBUTE_NORMAL = 0x80
+        INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
+
+        kernel32 = ctypes.windll.kernel32
+
+        # CreateFileW 반환 타입 설정
+        kernel32.CreateFileW.restype = wintypes.HANDLE
+        kernel32.CreateFileW.argtypes = [
+            wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+            ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE
+        ]
+
+        # 파일 핸들 열기
+        handle = kernel32.CreateFileW(
+            filepath,
+            GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            None
+        )
+
+        if handle == INVALID_HANDLE_VALUE:
+            return
+
+        try:
+            # Python timestamp → Windows FILETIME 변환
+            # Windows epoch: 1601-01-01, Unix epoch: 1970-01-01
+            EPOCH_DIFF = 116444736000000000  # 100ns intervals
+            ft_value = int((timestamp * 10000000) + EPOCH_DIFF)
+
+            filetime = FILETIME()
+            filetime.dwLowDateTime = ft_value & 0xFFFFFFFF
+            filetime.dwHighDateTime = (ft_value >> 32) & 0xFFFFFFFF
+
+            # SetFileTime 타입 설정
+            kernel32.SetFileTime.argtypes = [
+                wintypes.HANDLE,
+                ctypes.POINTER(FILETIME),
+                ctypes.POINTER(FILETIME),
+                ctypes.POINTER(FILETIME)
+            ]
+            kernel32.SetFileTime.restype = wintypes.BOOL
+
+            # 만든 날짜, 접근 날짜, 수정 날짜 모두 설정
+            kernel32.SetFileTime(
+                handle,
+                ctypes.byref(filetime),  # 만든 날짜
+                ctypes.byref(filetime),  # 접근 날짜
+                ctypes.byref(filetime)   # 수정 날짜
+            )
+        finally:
+            kernel32.CloseHandle(handle)
+
+    except Exception:
+        pass  # Windows API 실패해도 os.utime은 이미 성공

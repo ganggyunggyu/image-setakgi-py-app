@@ -13,8 +13,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QApplication,
 )
-from PySide6.QtCore import Qt, Signal, QThreadPool, QRunnable, QObject
-from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent, QPixmap
+from PySide6.QtCore import Qt, Signal, QThreadPool, QRunnable, QObject, QUrl
+from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent, QPixmap, QDesktopServices
 from PIL import Image
 from pathlib import Path
 from typing import Optional
@@ -625,11 +625,10 @@ class MainWindow(QMainWindow):
             self._log_widget.add_log(
                 f"변환 완료: 성공 {self._completed}개, 실패 {len(self._failed)}개", "info"
             )
-            QMessageBox.information(
-                self,
-                "완료",
-                f"변환이 완료되었습니다.\n출력 폴더: {self._output_manager.get_output_dir()}",
-            )
+
+            # 출력 폴더 자동 열기
+            output_dir = self._output_manager.get_output_dir()
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_dir)))
 
     def _start_random_conversion(self):
         """랜덤 변형 실행 - 각 이미지에 다른 랜덤 값 적용"""
