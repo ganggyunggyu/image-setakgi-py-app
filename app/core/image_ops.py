@@ -1,7 +1,64 @@
 import numpy as np
+import math
 from PIL import Image, ImageEnhance, ImageFilter
 from typing import Optional, List, Tuple
 import io
+
+
+def get_inscribed_rect_size(orig_w: int, orig_h: int, angle_deg: float) -> tuple[int, int]:
+    """회전 후 빈 공간 없이 추출 가능한 최대 직사각형 크기 (원본 비율 유지)"""
+    if angle_deg == 0:
+        return orig_w, orig_h
+
+    angle = math.radians(abs(angle_deg))
+    cos_a = abs(math.cos(angle))
+    sin_a = abs(math.sin(angle))
+
+    # cos(2θ) = cos²θ - sin²θ
+    cos_2a = cos_a * cos_a - sin_a * sin_a
+
+    if abs(cos_2a) < 1e-10:
+        # 45도 근처
+        scale = 1 / math.sqrt(2)
+        return int(orig_w * scale), int(orig_h * scale)
+
+    # 원본 비율 유지 최대 내접 직사각형
+    if orig_w * sin_a >= orig_h * cos_a:
+        new_w = (orig_w * cos_a - orig_h * sin_a) / cos_2a
+        new_h = new_w * orig_h / orig_w
+    else:
+        new_h = (orig_h * cos_a - orig_w * sin_a) / cos_2a
+        new_w = new_h * orig_w / orig_h
+
+    # 음수/너무 작은 값 방지 (큰 각도에서 발생)
+    if new_w <= 10 or new_h <= 10:
+        scale = cos_a
+        return max(10, int(orig_w * scale)), max(10, int(orig_h * scale))
+
+    return int(new_w), int(new_h)
+
+
+def rotate_and_crop(img: Image.Image, angle: float) -> Image.Image:
+    """회전 후 빈 공간 없이 중앙 크롭"""
+    if angle == 0:
+        return img.copy()
+
+    orig_w, orig_h = img.size
+
+    # 회전 (expand=True로 전체 이미지 보존)
+    rotated = img.rotate(-angle, expand=True, resample=Image.Resampling.BICUBIC)
+    rot_w, rot_h = rotated.size
+
+    # 내접 직사각형 크기 계산
+    crop_w, crop_h = get_inscribed_rect_size(orig_w, orig_h, angle)
+
+    # 중앙 크롭
+    left = (rot_w - crop_w) // 2
+    top = (rot_h - crop_h) // 2
+    right = left + crop_w
+    bottom = top + crop_h
+
+    return rotated.crop((left, top, right, bottom))
 
 
 def crop_edges(
@@ -34,11 +91,11 @@ def crop_edges(
             new_h += 1
             pad_bottom += 1
 
-        # 패딩은 항상 투명 배경 (RGBA)
-        if img.mode != "RGBA":
-            img = img.convert("RGBA")
+        # 패딩은 흰색 배경 (JPEG 호환)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
 
-        new_img = Image.new("RGBA", (new_w, new_h), (0, 0, 0, 0))
+        new_img = Image.new("RGB", (new_w, new_h), (255, 255, 255))
         new_img.paste(img, (pad_left, pad_top))
         return new_img
 
@@ -120,7 +177,7 @@ def adjust_saturation(img: Image.Image, factor: int) -> Image.Image:
     return enhancer.enhance(1 + factor / 100)
 
 
-def add_noise(img: Image.Image, intensity: int) -> Image.Image:
+def add_noise(img: Image.Image, intensity: float) -> Image.Image:
     if intensity == 0:
         return img.copy()
 
@@ -136,7 +193,7 @@ def apply_transforms(
     brightness: int = 0,
     contrast: int = 0,
     saturation: int = 0,
-    noise: int = 0,
+    noise: float = 0,
     perspective_corners: Optional[List[Tuple[float, float]]] = None,
     crop: Optional[dict] = None,
 ) -> Image.Image:
@@ -158,7 +215,7 @@ def apply_transforms(
         result = perspective_transform(result, perspective_corners)
 
     if rotation != 0:
-        result = rotate_image(result, rotation)
+        result = rotate_and_crop(result, rotation)
 
     if brightness != 0:
         result = adjust_brightness(result, brightness)
@@ -195,14 +252,15 @@ def perspective_transform(
     img: Image.Image,
     corners: List[Tuple[float, float]]
 ) -> Image.Image:
+    """원근 변형 후 빈 공간 없이 중앙 크롭"""
     if len(corners) != 4:
         return img.copy()
 
     orig_w, orig_h = img.size
 
-    # 원근 변형은 항상 RGBA로 처리 (투명 배경 보존)
-    if img.mode != "RGBA":
-        img = img.convert("RGBA")
+    # RGB로 처리 (JPEG 호환)
+    if img.mode not in ("RGB", "RGBA"):
+        img = img.convert("RGB")
 
     source_corners = [
         (0, 0),
@@ -210,6 +268,13 @@ def perspective_transform(
         (orig_w, orig_h),
         (0, orig_h)
     ]
+
+    # 코너별 오프셋 계산 (빈 공간 크기 추정용)
+    offsets = []
+    for (ox, oy), (cx, cy) in zip(source_corners, corners):
+        offsets.append(abs(cx - ox))
+        offsets.append(abs(cy - oy))
+    max_offset = max(offsets) if offsets else 0
 
     xs = [c[0] for c in corners]
     ys = [c[1] for c in corners]
@@ -226,16 +291,28 @@ def perspective_transform(
 
     coeffs = find_perspective_coeffs(source_corners, adjusted_corners)
 
+    # 흰색 배경으로 변형 (투명 대신)
+    fill = (255, 255, 255) if img.mode == "RGB" else (255, 255, 255, 255)
     result = img.transform(
         (output_w, output_h),
         Image.Transform.PERSPECTIVE,
         coeffs,
         Image.Resampling.BICUBIC,
-        fillcolor=(255, 255, 255, 0)
+        fillcolor=fill
     )
 
-    # 원근 변형 결과는 항상 RGBA로 반환 (PNG로 저장하여 투명도 보존)
-    return result
+    # 빈 공간(흰색 배경) 없이 중앙 크롭
+    # 오프셋의 2배만큼 안쪽으로 크롭해서 빈 공간 완전 제거
+    margin = int(max_offset * 2) + 2
+    crop_w = max(10, output_w - margin * 2)
+    crop_h = max(10, output_h - margin * 2)
+
+    left = (output_w - crop_w) // 2
+    top = (output_h - crop_h) // 2
+    right = left + crop_w
+    bottom = top + crop_h
+
+    return result.crop((left, top, right, bottom))
 
 
 def get_image_info(filepath: str) -> dict:
