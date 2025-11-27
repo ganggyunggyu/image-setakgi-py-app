@@ -244,6 +244,71 @@ class CropWidget(QWidget):
         return out_w, out_h
 
 
+class PerspectiveWidget(QWidget):
+    """자유변형 오프셋 수동 조절 위젯"""
+    perspective_changed = Signal(float)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._offset = 0.0
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+
+        label = QLabel("코너 오프셋")
+        label.setFixedWidth(70)
+        row.addWidget(label)
+
+        self._spin = QDoubleSpinBox()
+        self._spin.setRange(-50.0, 50.0)
+        self._spin.setValue(0.0)
+        self._spin.setSingleStep(0.5)
+        self._spin.setDecimals(1)
+        self._spin.setSuffix(" px")
+        self._spin.setFixedWidth(100)
+        self._spin.valueChanged.connect(self._on_spin_change)
+        row.addWidget(self._spin)
+
+        row.addStretch()
+        layout.addLayout(row)
+
+        info_label = QLabel("4개 코너에 ±오프셋 적용")
+        info_label.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(info_label)
+
+        reset_row = QHBoxLayout()
+        self._reset_btn = QPushButton("자유변형 초기화")
+        self._reset_btn.clicked.connect(self._on_reset)
+        reset_row.addWidget(self._reset_btn)
+        layout.addLayout(reset_row)
+
+    def _on_spin_change(self, value: float):
+        self._offset = value
+        self.perspective_changed.emit(value)
+
+    def _on_reset(self):
+        self._offset = 0.0
+        self._spin.blockSignals(True)
+        self._spin.setValue(0.0)
+        self._spin.blockSignals(False)
+        self.perspective_changed.emit(0.0)
+
+    def value(self) -> float:
+        return self._offset
+
+    def set_value(self, value: float):
+        self._offset = value
+        self._spin.blockSignals(True)
+        self._spin.setValue(value)
+        self._spin.blockSignals(False)
+
+
 class ExifPanel(QWidget):
     exif_changed = Signal(dict)
 
@@ -326,6 +391,7 @@ class OptionsPanel(QWidget):
     options_changed = Signal(dict)
     free_transform_toggled = Signal(bool)
     reset_requested = Signal()
+    perspective_offset_changed = Signal(float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -353,6 +419,10 @@ class OptionsPanel(QWidget):
 
         self._rotation = RotationWidget()
         transform_layout.addWidget(self._rotation)
+
+        self._perspective = PerspectiveWidget()
+        transform_layout.addWidget(self._perspective)
+
         layout.addWidget(transform_group)
 
         adjust_group = QGroupBox("색상 조정")
@@ -404,11 +474,16 @@ class OptionsPanel(QWidget):
     def _connect_signals(self):
         self._crop_widget.crop_changed.connect(self._emit_change)
         self._rotation.value_changed.connect(self._emit_change)
+        self._perspective.perspective_changed.connect(self._on_perspective_change)
         self._brightness.value_changed.connect(self._emit_change)
         self._contrast.value_changed.connect(self._emit_change)
         self._saturation.value_changed.connect(self._emit_change)
         self._noise.value_changed.connect(self._emit_change)
         self._exif_panel.exif_changed.connect(self._emit_change)
+
+    def _on_perspective_change(self, offset: float):
+        self.perspective_offset_changed.emit(offset)
+        self._emit_change()
 
     def _on_free_transform_toggle(self, checked: bool):
         self.free_transform_toggled.emit(checked)
@@ -420,6 +495,7 @@ class OptionsPanel(QWidget):
     def _reset_all_options(self):
         self._crop_widget._on_reset()
         self._rotation.set_value(0.0)
+        self._perspective.set_value(0.0)
         self._brightness.set_value(0)
         self._contrast.set_value(0)
         self._saturation.set_value(0)
@@ -442,6 +518,7 @@ class OptionsPanel(QWidget):
             "crop": crop,
             "free_transform_mode": True,
             "rotation": self._rotation.value(),
+            "perspective_offset": self._perspective.value(),
             "brightness": self._brightness.value(),
             "contrast": self._contrast.value(),
             "saturation": self._saturation.value(),

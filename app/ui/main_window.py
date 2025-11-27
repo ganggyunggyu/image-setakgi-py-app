@@ -21,6 +21,7 @@ from typing import Optional
 
 from .preview_widget import PreviewWidget
 from .options_panel import OptionsPanel
+from .log_widget import LogWidget
 from app.core.preview import PreviewThread, pil_to_qpixmap, create_thumbnail, MAX_PREVIEW_SIZE
 from app.core.image_ops import apply_transforms
 from app.core.metadata import (
@@ -32,11 +33,16 @@ from app.core.metadata import (
 from app.core.transform_history import record_transform
 from app.core.save_output import OutputManager
 from app.core.config import load_config, save_config
+from app.core.random_transform import (
+    RandomTransformConfig,
+    generate_random_options,
+    format_random_log,
+)
 
 
 class WorkerSignals(QObject):
     progress = Signal(int, int)
-    finished = Signal(str, bool, str)
+    finished = Signal(str, bool, str, dict)  # filepath, success, result, applied_options
     all_done = Signal()
 
 
@@ -119,10 +125,10 @@ class TransformWorker(QRunnable):
                 metadata_actions=metadata_actions,
             )
 
-            self.signals.finished.emit(self.filepath, True, str(output_path))
+            self.signals.finished.emit(self.filepath, True, str(output_path), self.options)
 
         except Exception as e:
-            self.signals.finished.emit(self.filepath, False, str(e))
+            self.signals.finished.emit(self.filepath, False, str(e), {})
 
 
 class FileListWidget(QListWidget):
@@ -173,6 +179,8 @@ class MainWindow(QMainWindow):
         self._failed: list = []
         self._output_manager: Optional[OutputManager] = None
         self._workers: list = []
+        self._random_mode = False
+        self._random_config = RandomTransformConfig()
 
         self._setup_ui()
         self._connect_signals()
@@ -216,6 +224,9 @@ class MainWindow(QMainWindow):
         self._preview = PreviewWidget()
         center_layout.addWidget(self._preview)
 
+        self._log_widget = LogWidget()
+        center_layout.addWidget(self._log_widget)
+
         splitter.addWidget(center_panel)
 
         right_panel = QWidget()
@@ -241,6 +252,14 @@ class MainWindow(QMainWindow):
         action_layout.addWidget(self._convert_btn)
         right_layout.addLayout(action_layout)
 
+        random_layout = QHBoxLayout()
+        self._random_btn = QPushButton("🎲 랜덤 변환 실행")
+        self._random_btn.setStyleSheet(
+            "background-color: #9c27b0; color: white; font-weight: bold; padding: 10px;"
+        )
+        random_layout.addWidget(self._random_btn)
+        right_layout.addLayout(random_layout)
+
         self._output_path_label = QLabel("출력 폴더: 미선택")
         right_layout.addWidget(self._output_path_label)
 
@@ -261,10 +280,12 @@ class MainWindow(QMainWindow):
         self._options.options_changed.connect(self._on_options_changed)
         self._options.free_transform_toggled.connect(self._on_free_transform_toggle)
         self._options.reset_requested.connect(self._on_reset_requested)
+        self._options.perspective_offset_changed.connect(self._on_perspective_offset_changed)
         self._preview.perspective_changed.connect(self._on_perspective_changed)
 
         self._output_btn.clicked.connect(self._select_output_folder)
         self._convert_btn.clicked.connect(self._start_conversion)
+        self._random_btn.clicked.connect(self._start_random_conversion)
 
     def _apply_styles(self):
         self.setStyleSheet(
@@ -462,6 +483,30 @@ class MainWindow(QMainWindow):
         self._perspective_corners = corners
         self._update_preview()
 
+    def _on_perspective_offset_changed(self, offset: float):
+        """수동 perspective offset 변경 시 호출"""
+        if self._current_image is None:
+            return
+
+        if offset == 0:
+            self._perspective_corners = None
+        else:
+            # 현재 이미지의 thumbnail 크기 기준으로 코너 계산
+            orig_w, orig_h = self._current_image.size
+            ratio = min(MAX_PREVIEW_SIZE / orig_w, MAX_PREVIEW_SIZE / orig_h, 1.0)
+            thumb_w = int(orig_w * ratio)
+            thumb_h = int(orig_h * ratio)
+
+            # 각 코너에 offset 적용
+            self._perspective_corners = [
+                (0 + offset, 0 + offset),           # top-left
+                (thumb_w - offset, 0 + offset),    # top-right
+                (thumb_w - offset, thumb_h - offset),  # bottom-right
+                (0 + offset, thumb_h - offset),    # bottom-left
+            ]
+
+        self._update_preview()
+
     def _on_reset_requested(self):
         self._perspective_corners = None
         if self._current_image:
@@ -515,11 +560,16 @@ class MainWindow(QMainWindow):
 
         self._output_manager = output_manager
 
-    def _on_worker_finished(self, filepath: str, success: bool, result: str):
+    def _on_worker_finished(self, filepath: str, success: bool, result: str, applied_options: dict):
+        filename = Path(filepath).name
         if success:
             self._completed += 1
+            if self._random_mode and applied_options:
+                log_msg = format_random_log(filename, applied_options)
+                self._log_widget.add_log(log_msg, "success")
         else:
             self._failed.append((filepath, result))
+            self._log_widget.add_log(f"[{filename}] 오류: {result}", "error")
 
         total_done = self._completed + len(self._failed)
         self._progress.setValue(total_done)
@@ -527,14 +577,82 @@ class MainWindow(QMainWindow):
         if total_done >= len(self._files):
             self._progress.setVisible(False)
             self._convert_btn.setEnabled(True)
+            self._random_btn.setEnabled(True)
             self._workers.clear()
+            self._random_mode = False
 
             self._status_label.setText("변환 완료")
+            self._log_widget.add_separator()
+            self._log_widget.add_log(
+                f"변환 완료: 성공 {self._completed}개, 실패 {len(self._failed)}개", "info"
+            )
             QMessageBox.information(
                 self,
                 "완료",
                 f"변환이 완료되었습니다.\n출력 폴더: {self._output_manager.get_output_dir()}",
             )
+
+    def _start_random_conversion(self):
+        """랜덤 변형 실행 - 각 이미지에 다른 랜덤 값 적용"""
+        if not self._files:
+            QMessageBox.warning(self, "경고", "변환할 파일이 없습니다.")
+            return
+
+        output_dir = self._config.get("last_output_dir", "")
+        if not output_dir:
+            QMessageBox.warning(self, "경고", "출력 폴더를 선택하세요.")
+            return
+
+        self._random_mode = True
+        self._log_widget.clear()
+        self._log_widget.add_log("🎲 랜덤 변환 시작", "info")
+        self._log_widget.add_separator()
+
+        self._progress.setVisible(True)
+        self._progress.setMaximum(len(self._files))
+        self._progress.setValue(0)
+        self._convert_btn.setEnabled(False)
+        self._random_btn.setEnabled(False)
+
+        self._completed = 0
+        self._failed = []
+        self._workers = []
+
+        # 랜덤 모드용 폴더명
+        random_folder_options = {"random": True}
+        output_manager = OutputManager(output_dir, random_folder_options)
+
+        for filepath in self._files:
+            try:
+                img = Image.open(filepath)
+                orig_w, orig_h = img.size
+                img.close()
+
+                # thumbnail 크기 계산 (MAX_PREVIEW_SIZE 기준)
+                ratio = min(MAX_PREVIEW_SIZE / orig_w, MAX_PREVIEW_SIZE / orig_h, 1.0)
+                thumb_w = int(orig_w * ratio)
+                thumb_h = int(orig_h * ratio)
+
+                # 각 이미지별로 새로운 랜덤 옵션 생성 (thumbnail 좌표 기준)
+                random_options = generate_random_options(
+                    self._random_config, thumb_w, thumb_h,
+                    include_perspective=True,
+                    include_date=True,
+                )
+
+                worker = TransformWorker(filepath, random_options, output_manager)
+                worker.setAutoDelete(False)
+                worker.signals.finished.connect(
+                    self._on_worker_finished, Qt.ConnectionType.QueuedConnection
+                )
+                self._workers.append(worker)
+                self._thread_pool.start(worker)
+
+            except Exception as e:
+                self._log_widget.add_log(f"[{Path(filepath).name}] 파일 열기 실패: {e}", "error")
+                self._failed.append((filepath, str(e)))
+
+        self._output_manager = output_manager
 
     def closeEvent(self, event):
         save_config(self._config)

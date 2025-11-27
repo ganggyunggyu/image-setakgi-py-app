@@ -10,30 +10,33 @@ def create_output_folder(base_dir: str, options: dict = None) -> Path:
     parts = []
 
     if options:
-        crop = options.get("crop", {})
-        crop_val = crop.get("top", 0)
-        if crop_val != 0:
-            parts.append(f"크롭{crop_val}")
+        if options.get("random"):
+            parts.append("랜덤변환")
+        else:
+            crop = options.get("crop", {})
+            crop_val = crop.get("top", 0)
+            if crop_val != 0:
+                parts.append(f"크롭{crop_val}")
 
-        rotation = options.get("rotation", 0)
-        if rotation != 0:
-            parts.append(f"회전{rotation}")
+            rotation = options.get("rotation", 0)
+            if rotation != 0:
+                parts.append(f"회전{rotation}")
 
-        brightness = options.get("brightness", 0)
-        if brightness != 0:
-            parts.append(f"밝기{brightness}")
+            brightness = options.get("brightness", 0)
+            if brightness != 0:
+                parts.append(f"밝기{brightness}")
 
-        contrast = options.get("contrast", 0)
-        if contrast != 0:
-            parts.append(f"대비{contrast}")
+            contrast = options.get("contrast", 0)
+            if contrast != 0:
+                parts.append(f"대비{contrast}")
 
-        saturation = options.get("saturation", 0)
-        if saturation != 0:
-            parts.append(f"채도{saturation}")
+            saturation = options.get("saturation", 0)
+            if saturation != 0:
+                parts.append(f"채도{saturation}")
 
-        noise = options.get("noise", 0)
-        if noise != 0:
-            parts.append(f"노이즈{noise}")
+            noise = options.get("noise", 0)
+            if noise != 0:
+                parts.append(f"노이즈{noise}")
 
     if not parts:
         parts.append("output")
