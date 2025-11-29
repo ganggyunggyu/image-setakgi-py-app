@@ -1,31 +1,31 @@
 @echo off
 REM ============================================
-REM Image Setakgi - Windows 빌드 스크립트
+REM Image Setakgi - Windows Build Script
 REM ============================================
 
 echo ==========================================
 echo   Image Setakgi - Windows Build
 echo ==========================================
 
-REM 1. 가상환경 생성 (없으면)
+REM 1. Create virtual environment (if not exists)
 if not exist "venv" (
-    echo [1/4] 가상환경 생성 중...
+    echo [1/4] Creating virtual environment...
     python -m venv venv
 ) else (
-    echo [1/4] 가상환경 이미 존재함
+    echo [1/4] Virtual environment already exists
 )
 
-REM 2. 가상환경 활성화
-echo [2/4] 가상환경 활성화...
+REM 2. Activate virtual environment
+echo [2/4] Activating virtual environment...
 call venv\Scripts\activate.bat
 
-REM 3. 의존성 설치
-echo [3/4] 의존성 설치 중...
+REM 3. Install dependencies
+echo [3/4] Installing dependencies...
 pip install --upgrade pip
 pip install -r requirements.txt
 
-REM 4. PyInstaller로 빌드
-echo [4/4] 앱 빌드 중...
+REM 4. Build with PyInstaller
+echo [4/4] Building app...
 pyinstaller ^
     --noconfirm ^
     --windowed ^
@@ -36,13 +36,13 @@ pyinstaller ^
 
 echo.
 echo ==========================================
-echo   빌드 완료!
+echo   Build Complete!
 echo ==========================================
 echo.
-echo 실행 파일 위치: dist\ImageSetakgi.exe
+echo Executable location: dist\ImageSetakgi.exe
 echo.
-echo 실행 방법:
-echo   dist\ImageSetakgi.exe 더블클릭
+echo How to run:
+echo   Double-click dist\ImageSetakgi.exe
 echo ==========================================
 
 pause

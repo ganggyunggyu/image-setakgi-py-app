@@ -1,5 +1,6 @@
 """랜덤 변형 값 생성기"""
 import random
+import platform
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -125,25 +126,38 @@ def generate_random_options(
 
 
 def format_random_log(filename: str, options: dict) -> str:
-    """랜덤 변형 로그 포맷"""
+    """랜덤 변형 로그 포맷 (Windows는 영어, 기타는 한글)"""
     crop = options.get("crop", {}).get("top", 0)
     rotation = options.get("rotation", 0)
     noise = options.get("noise", 0)
 
+    is_windows = platform.system() == "Windows"
+
     parts = [f"[{filename}]"]
-    parts.append(f"크롭:{crop:+d}px")
-    parts.append(f"회전:{rotation:+.1f}°")
-    parts.append(f"노이즈:{noise:.1f}")
+
+    if is_windows:
+        # Windows: 영어 로그
+        parts.append(f"Crop:{crop:+d}px")
+        parts.append(f"Rotate:{rotation:+.1f}°")
+        parts.append(f"Noise:{noise:.1f}")
+    else:
+        # macOS/Linux: 한글 로그
+        parts.append(f"크롭:{crop:+d}px")
+        parts.append(f"회전:{rotation:+.1f}°")
+        parts.append(f"노이즈:{noise:.1f}")
 
     perspective = options.get("perspective_corners")
     if perspective:
         offsets = []
         for i, (x, y) in enumerate(perspective):
             offsets.append(f"({x:.1f},{y:.1f})")
-        parts.append(f"자유변형:{','.join(offsets)}")
+
+        label = "Transform" if is_windows else "자유변형"
+        parts.append(f"{label}:{','.join(offsets)}")
 
     exif = options.get("exif", {})
     if exif.get("override") and exif.get("datetime"):
-        parts.append(f"날짜:{exif['datetime']}")
+        label = "Date" if is_windows else "날짜"
+        parts.append(f"{label}:{exif['datetime']}")
 
     return " | ".join(parts)
