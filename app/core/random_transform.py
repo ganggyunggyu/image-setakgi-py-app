@@ -30,20 +30,29 @@ def generate_random_noise(max_range: float = NOISE_RANGE) -> float:
 def generate_random_perspective(
     width: int, height: int, max_offset: float = PERSPECTIVE_RANGE
 ) -> list[tuple[float, float]]:
-    """자유변형 코너에 ±max_offset 범위의 랜덤 오프셋 적용 (소수점 1자리)"""
+    """랜덤으로 1개 코너만 선택하여 오프셋 적용 (소수점 1자리)"""
     base_corners = [
         (0, 0),
         (width, 0),
         (width, height),
         (0, height),
     ]
-    return [
-        (
-            round(x + random.uniform(-max_offset, max_offset), 1),
-            round(y + random.uniform(-max_offset, max_offset), 1),
-        )
-        for x, y in base_corners
-    ]
+
+    # 4개 코너 중 랜덤으로 1개만 선택
+    selected_index = random.randint(0, 3)
+
+    result = []
+    for i, (x, y) in enumerate(base_corners):
+        if i == selected_index:
+            # 선택된 코너만 랜덤 오프셋 적용
+            new_x = round(x + random.uniform(-max_offset, max_offset), 1)
+            new_y = round(y + random.uniform(-max_offset, max_offset), 1)
+            result.append((new_x, new_y))
+        else:
+            # 나머지는 그대로
+            result.append((x, y))
+
+    return result
 
 
 def generate_random_datetime(days_back: int = DATE_DAYS_BACK) -> str:
