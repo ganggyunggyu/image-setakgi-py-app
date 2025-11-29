@@ -22,6 +22,8 @@ from typing import Optional
 from .preview_widget import PreviewWidget
 from .options_panel import OptionsPanel
 from .log_widget import LogWidget
+from .workers import TransformWorker, WorkerSignals
+from .widgets import FileListWidget
 from app.core.preview import PreviewThread, pil_to_qpixmap, create_thumbnail, MAX_PREVIEW_SIZE
 from app.core.image_ops import apply_transforms
 from app.core.metadata import remove_exif
@@ -33,172 +35,6 @@ from app.core.random_transform import (
     generate_random_options,
     format_random_log,
 )
-
-
-class WorkerSignals(QObject):
-    progress = Signal(int, int)
-    finished = Signal(str, bool, str, dict)  # filepath, success, result, applied_options
-    all_done = Signal()
-
-
-class TransformWorker(QRunnable):
-    def __init__(
-        self,
-        filepath: str,
-        options: dict,
-        output_manager: OutputManager,
-    ):
-        super().__init__()
-        self.filepath = filepath
-        self.options = options
-        self.output_manager = output_manager
-        self.signals = WorkerSignals()
-
-    def run(self):
-        try:
-            img = Image.open(self.filepath)
-
-            perspective_corners = None
-            if self.options.get("perspective_corners"):
-                thumbnail = create_thumbnail(img, MAX_PREVIEW_SIZE)
-                thumb_w, thumb_h = thumbnail.size
-                orig_w, orig_h = img.size
-
-                scale_x = orig_w / thumb_w
-                scale_y = orig_h / thumb_h
-
-                preview_corners = self.options.get("perspective_corners")
-                perspective_corners = [
-                    (x * scale_x, y * scale_y) for x, y in preview_corners
-                ]
-
-            result = apply_transforms(
-                img,
-                rotation=self.options.get("rotation", 0),
-                brightness=self.options.get("brightness", 0),
-                contrast=self.options.get("contrast", 0),
-                saturation=self.options.get("saturation", 0),
-                noise=self.options.get("noise", 0),
-                perspective_corners=perspective_corners,
-                crop=self.options.get("crop"),
-            )
-
-            # JPEG EXIF 메타데이터 처리 (DateTimeOriginal = Windows 촬영날짜)
-            exif_opts = self.options.get("exif", {})
-            metadata_overrides = None
-
-            if exif_opts.get("remove_all"):
-                result = remove_exif(result)
-            elif exif_opts.get("override"):
-                # datetime이 없으면 현재 시간 사용
-                from datetime import datetime as dt
-                datetime_val = exif_opts.get("datetime", "")
-                if not datetime_val:
-                    datetime_val = dt.now().strftime("%Y:%m:%d %H:%M:%S")
-
-                metadata_overrides = {"DateTimeOriginal": datetime_val}
-                result = remove_exif(result)
-
-            filename = Path(self.filepath).name
-            output_path = self.output_manager.save(result, filename, metadata_overrides)
-
-            metadata_actions = []
-            if exif_opts.get("remove_all"):
-                metadata_actions.append("remove_all")
-            if exif_opts.get("override"):
-                metadata_actions.append("override")
-
-            crop = self.options.get("crop", {})
-            record_transform(
-                filename=filename,
-                crop=crop,
-                rotation=self.options.get("rotation", 0),
-                brightness=self.options.get("brightness", 0),
-                contrast=self.options.get("contrast", 0),
-                saturation=self.options.get("saturation", 0),
-                noise=self.options.get("noise", 0),
-                metadata_actions=metadata_actions,
-            )
-
-            self.signals.finished.emit(self.filepath, True, str(output_path), self.options)
-
-        except Exception as e:
-            self.signals.finished.emit(self.filepath, False, str(e), {})
-
-
-class FileListWidget(QListWidget):
-    files_dropped = Signal(list)
-
-    STYLE_NORMAL = """
-        QListWidget {
-            background-color: #3d3d3d;
-            border: 2px solid #555;
-            border-radius: 4px;
-        }
-    """
-    STYLE_DRAG_OVER = """
-        QListWidget {
-            background-color: #3d4d5d;
-            border: 2px dashed #4285f4;
-            border-radius: 4px;
-        }
-    """
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAcceptDrops(True)
-        self.setDragEnabled(False)
-        self.setDragDropMode(QListWidget.DragDropMode.DropOnly)
-        self.setDefaultDropAction(Qt.DropAction.CopyAction)
-        self.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
-        self.setStyleSheet(self.STYLE_NORMAL)
-
-    def dragEnterEvent(self, event: QDragEnterEvent):
-        if event.mimeData().hasUrls():
-            self.setStyleSheet(self.STYLE_DRAG_OVER)
-            event.setDropAction(Qt.DropAction.CopyAction)
-            event.accept()
-        else:
-            event.ignore()
-
-    def dragLeaveEvent(self, event: QDragLeaveEvent):
-        self.setStyleSheet(self.STYLE_NORMAL)
-        event.accept()
-
-    def dragMoveEvent(self, event):
-        if event.mimeData().hasUrls():
-            event.setDropAction(Qt.DropAction.CopyAction)
-            event.accept()
-        else:
-            event.ignore()
-
-    def dropEvent(self, event: QDropEvent):
-        self.setStyleSheet(self.STYLE_NORMAL)
-        files = []
-        image_extensions = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
-
-        for url in event.mimeData().urls():
-            path = url.toLocalFile()
-            if not path:
-                continue
-
-            p = Path(path)
-            # 폴더인 경우 내부 이미지 파일 추가
-            if p.is_dir():
-                for f in p.iterdir():
-                    if f.is_file() and f.suffix.lower() in image_extensions:
-                        files.append(str(f))
-            # 이미지 파일인 경우
-            elif p.suffix.lower() in image_extensions:
-                files.append(path)
-
-        if files:
-            files.sort()
-            self.files_dropped.emit(files)
-            event.setDropAction(Qt.DropAction.CopyAction)
-            event.accept()
-        else:
-            event.ignore()
 
 
 class MainWindow(QMainWindow):
@@ -483,6 +319,8 @@ class MainWindow(QMainWindow):
         self._files.clear()
         self._current_file = None
         self._current_image = None
+        self._perspective_corners = None
+        self._preview.reset_corner_offsets()
         self._preview.set_image(QPixmap())
 
     def _on_file_selected(self, row: int):
@@ -501,6 +339,7 @@ class MainWindow(QMainWindow):
             self._options.set_original_size(w, h)
             self._preview.set_keep_ratio(True)
             self._perspective_corners = None
+            self._preview.reset_corner_offsets()
 
             self._update_preview()
 
@@ -578,25 +417,15 @@ class MainWindow(QMainWindow):
 
         if offset == 0:
             self._perspective_corners = None
+            self._preview.reset_corner_offsets()
         else:
-            # 현재 이미지의 thumbnail 크기 기준으로 코너 계산
-            orig_w, orig_h = self._current_image.size
-            ratio = min(MAX_PREVIEW_SIZE / orig_w, MAX_PREVIEW_SIZE / orig_h, 1.0)
-            thumb_w = int(orig_w * ratio)
-            thumb_h = int(orig_h * ratio)
-
-            # 각 코너에 offset 적용
-            self._perspective_corners = [
-                (0 + offset, 0 + offset),           # top-left
-                (thumb_w - offset, 0 + offset),    # top-right
-                (thumb_w - offset, thumb_h - offset),  # bottom-right
-                (0 + offset, thumb_h - offset),    # bottom-left
-            ]
-
-        self._update_preview()
+            # 프리뷰 위젯의 set_uniform_offset 사용
+            # perspective_changed 시그널이 발생하여 _on_perspective_changed에서 처리됨
+            self._preview.set_uniform_offset(offset)
 
     def _on_reset_requested(self):
         self._perspective_corners = None
+        self._preview.reset_corner_offsets()
         if self._current_image:
             self._loading_new_image = True
             self._update_preview()
@@ -705,8 +534,12 @@ class MainWindow(QMainWindow):
         self._failed = []
         self._workers = []
 
-        # 랜덤 모드용 폴더명
-        random_folder_options = {"random": True}
+        # 랜덤 모드용 폴더명 + UI에서 선택한 출력 포맷
+        ui_options = self._options.get_options()
+        random_folder_options = {
+            "random": True,
+            "output_format": ui_options.get("output_format", "jpeg"),
+        }
         output_manager = OutputManager(output_dir, random_folder_options)
 
         # UI에서 랜덤 설정값 가져오기
