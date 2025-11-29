@@ -1,108 +1,29 @@
 # 코드 개선점 분석 보고서
 
-> 분석일: 2025-11-26
+> 분석일: 2025-11-28
+> 이전 분석일: 2025-11-26
 > 분석 대상: Image Setakgi 전체 프로젝트
 
 ## 요약
 
-- 🔴 Critical: 3건
-- 🟠 High: 5건
-- 🟡 Medium: 7건
-- 🟢 Low: 4건
+- 🔴 Critical: 1건 (이전 3건 → 2건 해결됨)
+- 🟠 High: 4건 (이전 5건 → 1건 해결됨)
+- 🟡 Medium: 8건 (이전 7건 + 신규 1건)
+- 🟢 Low: 5건 (이전 4건 + 신규 1건)
+
+### 해결된 이슈
+
+- ✅ CRIT-001: transform_history.py JSON 예외 처리 추가됨
+- ✅ CRIT-002: preview.py QImage bytes_per_line 명시적 계산 추가됨
+- ✅ HIGH-004: CropWidget의 _on_reset()이 public reset() 메서드로 사용됨
 
 ---
 
 ## 🔴 Critical Issues
 
-### [CRIT-001] JSON 파일 로드 시 예외 처리 누락
+### [CRIT-001] 행렬 연산 예외 처리 누락
 
-**위치**: `app/core/transform_history.py:16-17`
-
-**문제**:
-히스토리 파일이 손상되었거나 잘못된 JSON 형식일 때 `json.load()`가 `JSONDecodeError`를 발생시키면 전체 앱이 크래시됨
-
-**현재 코드**:
-```python
-def load_history() -> dict[str, Any]:
-    ensure_history_dir()
-    if HISTORY_FILE.exists():
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)  # 예외 처리 없음
-    return {}
-```
-
-**영향**:
-- 파일이 손상되면 앱 시작 불가
-- 사용자 데이터 손실 가능
-
-**해결 방안**:
-```python
-def load_history() -> dict[str, Any]:
-    ensure_history_dir()
-    if HISTORY_FILE.exists():
-        try:
-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError) as e:
-            # 손상된 파일 백업 후 초기화
-            backup_path = HISTORY_FILE.with_suffix(".json.bak")
-            HISTORY_FILE.rename(backup_path)
-            return {}
-    return {}
-```
-
-**검증 방법**:
-- 손상된 JSON 파일로 앱 실행 테스트
-- 정상 파일로 복구 가능 여부 확인
-
----
-
-### [CRIT-002] QImage 메모리 참조 문제
-
-**위치**: `app/core/preview.py:30-32`
-
-**문제**:
-`img.tobytes()`로 생성된 바이트 데이터가 QImage 생성 후 Python GC에 의해 해제될 수 있음. QImage는 데이터를 복사하지 않고 참조만 유지하므로, 원본 데이터가 해제되면 이미지가 깨짐
-
-**현재 코드**:
-```python
-def pil_to_qpixmap(img: Image.Image) -> QPixmap:
-    # ...
-    data = img.tobytes("raw", img.mode)
-    qimage = QImage(data, img.width, img.height, qformat)
-    return QPixmap.fromImage(qimage.copy())
-```
-
-**영향**:
-- 간헐적 이미지 깨짐 현상
-- 디버깅 어려운 메모리 관련 버그
-
-**해결 방안**:
-```python
-def pil_to_qpixmap(img: Image.Image) -> QPixmap:
-    if img.mode == "RGBA":
-        qformat = QImage.Format.Format_RGBA8888
-    else:
-        img = img.convert("RGB")
-        qformat = QImage.Format.Format_RGB888
-
-    # bytes_per_line을 명시적으로 계산하여 전달
-    data = img.tobytes("raw", img.mode)
-    bytes_per_line = img.width * len(img.mode)
-    qimage = QImage(data, img.width, img.height, bytes_per_line, qformat)
-    # copy()를 통해 데이터를 복사하여 안전하게 반환
-    return QPixmap.fromImage(qimage.copy())
-```
-
-**검증 방법**:
-- 연속 이미지 로드 테스트
-- 메모리 프로파일링
-
----
-
-### [CRIT-003] 행렬 연산 예외 처리 누락
-
-**위치**: `app/core/image_ops.py:151-154`
+**위치**: [image_ops.py:243-248](app/core/image_ops.py#L243-L248)
 
 **문제**:
 원근 변환 계수 계산 시 `np.linalg.inv()`가 singular matrix(역행렬이 존재하지 않는 행렬)에서 `LinAlgError`를 발생시킴
@@ -120,7 +41,7 @@ def find_perspective_coeffs(
 
 **영향**:
 - 사용자가 코너를 특정 위치로 이동 시 앱 크래시
-- 변환 작업 중 데이터 손실
+- 4개의 코너가 일직선이나 한 점으로 모이면 발생
 
 **해결 방안**:
 ```python
@@ -152,7 +73,7 @@ def find_perspective_coeffs(
 
 ### [HIGH-001] 스레드 종료 처리 불안정
 
-**위치**: `app/ui/main_window.py:402-404`
+**위치**: [main_window.py:354-357](app/ui/main_window.py#L354-L357)
 
 **문제**:
 `quit()`와 `wait()` 호출 시 타임아웃 없이 무한 대기할 수 있음
@@ -181,7 +102,7 @@ if self._preview_thread and self._preview_thread.isRunning():
 
 ### [HIGH-002] bare except 사용
 
-**위치**: `app/core/metadata.py:41`
+**위치**: [metadata.py:53](app/core/metadata.py#L53)
 
 **문제**:
 `except:` 는 `SystemExit`, `KeyboardInterrupt` 등 모든 예외를 잡아버려 예상치 못한 동작 발생
@@ -206,10 +127,10 @@ except (UnicodeDecodeError, AttributeError):
 
 ### [HIGH-003] config.py JSON 로드 시 예외 처리 누락
 
-**위치**: `app/core/config.py:30-34`
+**위치**: [config.py:29-34](app/core/config.py#L29-L34)
 
 **문제**:
-CRIT-001과 동일하게 손상된 설정 파일 처리 안됨
+손상된 설정 파일 처리 안됨
 
 **현재 코드**:
 ```python
@@ -234,43 +155,9 @@ return DEFAULT_CONFIG.copy()
 
 ---
 
-### [HIGH-004] 캡슐화 위반 - private 메서드 직접 호출
+### [HIGH-004] closeEvent에서 스레드풀 대기 시 앱 멈춤 가능
 
-**위치**: `app/ui/options_panel.py:423, 472`
-
-**문제**:
-다른 위젯의 private 메서드 `_on_reset()`을 직접 호출함
-
-**현재 코드**:
-```python
-def _reset_all_options(self):
-    self._crop_widget._on_reset()  # private 메서드 직접 호출
-```
-
-**영향**:
-- CropWidget 내부 구현 변경 시 OptionsPanel도 수정 필요
-- 유지보수성 저하
-
-**해결 방안**:
-CropWidget에 public 메서드 추가:
-```python
-# CropWidget 클래스에 추가
-def reset(self):
-    """크롭 설정 초기화 (public API)"""
-    self._on_reset()
-```
-
-그 후 OptionsPanel에서:
-```python
-def _reset_all_options(self):
-    self._crop_widget.reset()  # public 메서드 사용
-```
-
----
-
-### [HIGH-005] closeEvent에서 스레드풀 대기 시 앱 멈춤 가능
-
-**위치**: `app/ui/main_window.py:513`
+**위치**: [main_window.py:636-639](app/ui/main_window.py#L636-L639)
 
 **문제**:
 `waitForDone()` 타임아웃 없이 호출하면 작업 완료까지 UI 블록
@@ -295,9 +182,79 @@ def closeEvent(self, event):
 
 ## 🟡 Medium Priority Issues
 
-### [MED-001] 여러 상태 변수 동기화 복잡성
+### [MED-001] dropEvent 코드 중복
 
-**위치**: `app/ui/main_window.py:163-171`
+**위치**:
+- [main_window.py:607-634](app/ui/main_window.py#L607-L634)
+- [file_list_widget.py:54-80](app/ui/widgets/file_list_widget.py#L54-L80)
+
+**문제**:
+MainWindow와 FileListWidget에서 거의 동일한 dropEvent 로직이 중복됨
+
+**현재 코드**:
+```python
+# MainWindow
+def dropEvent(self, event: QDropEvent):
+    files = []
+    image_extensions = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+    for url in event.mimeData().urls():
+        # ... 동일한 로직 반복
+
+# FileListWidget
+def dropEvent(self, event: QDropEvent):
+    files = []
+    image_extensions = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+    for url in event.mimeData().urls():
+        # ... 동일한 로직 반복
+```
+
+**해결 방안**:
+유틸리티 함수로 추출:
+```python
+# utils/file_utils.py
+SUPPORTED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+
+def extract_image_files_from_urls(urls) -> list[str]:
+    """URL 목록에서 이미지 파일 경로 추출"""
+    files = []
+    for url in urls:
+        path = url.toLocalFile()
+        if not path:
+            continue
+        p = Path(path)
+        if p.is_dir():
+            for f in p.iterdir():
+                if f.is_file() and f.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
+                    files.append(str(f))
+        elif p.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
+            files.append(path)
+    return sorted(files) if files else []
+```
+
+---
+
+### [MED-002] image_extensions 상수 중복 정의
+
+**위치**:
+- [main_window.py:294](app/ui/main_window.py#L294)
+- [main_window.py:611](app/ui/main_window.py#L611)
+- [file_list_widget.py:57](app/ui/widgets/file_list_widget.py#L57)
+
+**문제**:
+지원 확장자가 여러 곳에 하드코딩됨
+
+**해결 방안**:
+중앙 상수 파일에서 관리:
+```python
+# app/core/constants.py
+SUPPORTED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+```
+
+---
+
+### [MED-003] 여러 상태 변수 동기화 복잡성
+
+**위치**: [main_window.py:49-62](app/ui/main_window.py#L49-L62)
 
 **문제**:
 여러 Optional 변수들(`_current_file`, `_current_image`, `_perspective_corners`, `_loading_new_image`)의 상태가 동기화되어야 하지만 관리가 분산됨
@@ -331,9 +288,37 @@ class EditorState:
 
 ---
 
-### [MED-002] PreviewWorker와 PreviewThread 구조 불명확
+### [MED-004] PreviewThread 시그널 연결 해제 없음
 
-**위치**: `app/core/preview.py:35-94`
+**위치**: [main_window.py:366-368](app/ui/main_window.py#L366-L368)
+
+**문제**:
+매번 새로운 PreviewThread를 생성하고 시그널을 연결하지만, 이전 스레드의 시그널은 명시적으로 disconnect 하지 않음
+
+**현재 코드**:
+```python
+self._preview_thread = PreviewThread(self)
+# ...
+self._preview_thread.preview_ready.connect(self._on_preview_ready)
+self._preview_thread.preview_error.connect(self._on_preview_error)
+```
+
+**해결 방안**:
+이전 스레드 정리 시 시그널도 disconnect:
+```python
+if self._preview_thread:
+    try:
+        self._preview_thread.preview_ready.disconnect()
+        self._preview_thread.preview_error.disconnect()
+    except (TypeError, RuntimeError):
+        pass  # 이미 연결 해제됨
+```
+
+---
+
+### [MED-005] PreviewWorker와 PreviewThread 구조 불명확
+
+**위치**: [preview.py:38-98](app/core/preview.py#L38-L98)
 
 **문제**:
 PreviewWorker가 별도 객체로 존재하지만 PreviewThread 안에서만 사용됨. 이동할 수 있는 QObject 패턴도 사용하지 않음
@@ -343,72 +328,9 @@ PreviewWorker를 PreviewThread에 병합하거나, moveToThread 패턴을 올바
 
 ---
 
-### [MED-003] 매번 히스토리 전체 파일 읽기/쓰기
-
-**위치**: `app/core/transform_history.py:37-51`
-
-**문제**:
-`record_transform()` 호출마다 전체 파일을 읽고 다시 씀
-
-**영향**:
-- 히스토리가 커지면 성능 저하
-- 디스크 I/O 과다
-
-**해결 방안**:
-메모리 캐싱 또는 append-only 로그 파일 방식 고려
-
----
-
-### [MED-004] 파일 추가 시 중복 체크 O(n)
-
-**위치**: `app/ui/main_window.py:336-341`
-
-**문제**:
-리스트에서 `in` 연산자로 중복 체크하면 O(n) 복잡도
-
-**현재 코드**:
-```python
-for f in files:
-    if f not in self._files:  # O(n) 체크
-        self._files.append(f)
-```
-
-**해결 방안**:
-set을 추가로 유지하여 O(1) 체크:
-```python
-# __init__에서
-self._files_set: set[str] = set()
-
-# _add_files에서
-for f in files:
-    if f not in self._files_set:
-        self._files_set.add(f)
-        self._files.append(f)
-```
-
----
-
-### [MED-005] 매번 border_rect 재생성
-
-**위치**: `app/ui/graphics/view.py:168-173`
-
-**문제**:
-자유변형 모드에서 핸들 위치 업데이트마다 border를 삭제하고 새로 생성함
-
-**해결 방안**:
-QGraphicsPathItem의 path만 업데이트:
-```python
-if isinstance(self._border_rect, QGraphicsPathItem):
-    self._border_rect.setPath(path)
-else:
-    # 최초 생성 시만 새로 만듦
-```
-
----
-
 ### [MED-006] 매직 값 하드코딩
 
-**위치**: `app/core/metadata.py:85-108`
+**위치**: [metadata.py:98-104](app/core/metadata.py#L98-L104)
 
 **문제**:
 카메라 목록, 연도 범위 등이 코드에 하드코딩됨
@@ -427,16 +349,48 @@ RANDOM_YEAR_RANGE = (2018, 2024)
 
 ---
 
-### [MED-007] 미사용 import
+### [MED-007] 매번 border_rect 재생성
 
-**위치**: 여러 파일
+**위치**: [view.py:166-182](app/ui/graphics/view.py#L166-L182)
 
 **문제**:
-- `app/core/preview.py:5`: `io` 미사용
-- `app/core/image_ops.py:3`: `List`, `Tuple` → 리터럴 타입 힌트 사용 가능 (Python 3.9+)
+자유변형 모드에서 핸들 위치 업데이트마다 border를 삭제하고 새로 생성함
 
 **해결 방안**:
-미사용 import 제거, 모던 타입 힌트 문법 사용
+QGraphicsPathItem의 path만 업데이트:
+```python
+if isinstance(self._border_rect, QGraphicsPathItem):
+    self._border_rect.setPath(path)
+else:
+    # 최초 생성 시만 새로 만듦
+```
+
+---
+
+### [MED-008] Deprecated 파일 존재
+
+**위치**: [options_panel.py](app/ui/options_panel.py)
+
+**문제**:
+`options_panel.py`가 deprecated이고 `app.ui.options`로 리팩토링되었지만, 파일이 그대로 남아있음
+
+**현재 코드**:
+```python
+"""
+Deprecated: This module is kept for backward compatibility.
+Use app.ui.options instead.
+"""
+
+from app.ui.options import (
+    SliderWithSpinBox,
+    # ...
+)
+```
+
+**해결 방안**:
+1. 해당 파일을 import하는 곳이 있는지 확인
+2. 없다면 파일 삭제
+3. 있다면 import 경로를 새 모듈로 변경
 
 ---
 
@@ -448,9 +402,16 @@ RANDOM_YEAR_RANGE = (2018, 2024)
 
 **문제**:
 일부 함수는 타입 힌트가 있고, 일부는 없음
+- `list[str]` vs `List[str]` 혼용
+- `Optional[type]` vs `type | None` 혼용
 
 **해결 방안**:
-모든 public 함수에 타입 힌트 추가
+모던 Python (3.10+) 스타일로 통일:
+```python
+# 권장 스타일
+def process(items: list[str], value: int | None = None) -> dict[str, Any]:
+    ...
+```
 
 ---
 
@@ -461,15 +422,19 @@ RANDOM_YEAR_RANGE = (2018, 2024)
 **문제**:
 - 이벤트 핸들러: `_on_` 접두사와 `_handle_` 접두사 혼용
 - 예: `_on_slider_change` vs `_handle_free_transform_move`
+- JSON 키: snake_case와 camelCase 혼용 (`metadataActions`)
 
 **해결 방안**:
-네이밍 컨벤션 통일 (이벤트 핸들러는 `_on_`, 내부 처리 로직은 `_handle_`)
+네이밍 컨벤션 통일:
+- 이벤트 핸들러: `_on_` 접두사
+- 내부 처리 로직: `_handle_` 접두사
+- JSON 키: snake_case 통일
 
 ---
 
 ### [LOW-003] 스타일시트 상수화
 
-**위치**: `app/ui/main_window.py:266-333`
+**위치**: [main_window.py:176-243](app/ui/main_window.py#L176-L243)
 
 **문제**:
 긴 스타일시트 문자열이 메서드 안에 직접 작성됨
@@ -485,17 +450,46 @@ QMainWindow { ... }
 
 ---
 
-### [LOW-004] 파일 확장자 상수화
+### [LOW-004] 미사용 import
 
-**위치**: `app/ui/main_window.py:149`, `app/core/save_output.py:20`
+**위치**: [image_ops.py:5](app/core/image_ops.py#L5)
 
 **문제**:
-지원 확장자가 여러 곳에 하드코딩됨
+- `io` 모듈 미사용
+- `List`, `Tuple` → 리터럴 타입 힌트 사용 가능 (Python 3.9+)
+
+**해결 방안**:
+미사용 import 제거:
+```python
+# 제거
+import io
+
+# 변경 전
+from typing import Optional, List, Tuple
+
+# 변경 후
+from typing import Optional
+```
+
+---
+
+### [LOW-005] random_config.py의 타입 불일치
+
+**위치**: [random_config.py:7-8](app/core/random_config.py#L7-L8)
+
+**문제**:
+`ROTATION_RANGE`와 `PERSPECTIVE_RANGE`가 int로 정의되어 있지만, 사용하는 곳에서는 float으로 기대함
+
+**현재 코드**:
+```python
+ROTATION_RANGE = 3      # int
+PERSPECTIVE_RANGE = 6   # int
+```
 
 **해결 방안**:
 ```python
-# constants.py
-SUPPORTED_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
+ROTATION_RANGE = 3.0    # float
+PERSPECTIVE_RANGE = 6.0 # float
 ```
 
 ---
@@ -503,40 +497,42 @@ SUPPORTED_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 ## 개선 로드맵
 
 ### Phase 1: 긴급 수정 (Critical + High) - 안정성 확보
-1. [ ] CRIT-001: transform_history.py JSON 예외 처리
-2. [ ] CRIT-002: preview.py QImage 메모리 안전성
-3. [ ] CRIT-003: image_ops.py 행렬 연산 예외 처리
-4. [ ] HIGH-001: main_window.py 스레드 종료 타임아웃
-5. [ ] HIGH-002: metadata.py bare except 수정
-6. [ ] HIGH-003: config.py JSON 예외 처리
-7. [ ] HIGH-004: options_panel.py 캡슐화 개선
-8. [ ] HIGH-005: main_window.py closeEvent 타임아웃
+1. [ ] CRIT-001: image_ops.py 행렬 연산 예외 처리
+2. [ ] HIGH-001: main_window.py 스레드 종료 타임아웃
+3. [ ] HIGH-002: metadata.py bare except 수정
+4. [ ] HIGH-003: config.py JSON 예외 처리
+5. [ ] HIGH-004: main_window.py closeEvent 타임아웃
 
 ### Phase 2: 품질 개선 (Medium) - 성능 및 유지보수성
-1. [ ] MED-001: 상태 관리 리팩토링
-2. [ ] MED-002: PreviewThread 구조 정리
-3. [ ] MED-003: 히스토리 캐싱
-4. [ ] MED-004: 파일 중복 체크 최적화
-5. [ ] MED-005: border_rect 업데이트 최적화
+1. [ ] MED-001: dropEvent 중복 코드 추출
+2. [ ] MED-002: image_extensions 상수화
+3. [ ] MED-003: 상태 관리 리팩토링
+4. [ ] MED-004: PreviewThread 시그널 정리
+5. [ ] MED-005: PreviewThread 구조 정리
 6. [ ] MED-006: 매직 값 상수화
-7. [ ] MED-007: 미사용 import 정리
+7. [ ] MED-007: border_rect 업데이트 최적화
+8. [ ] MED-008: Deprecated 파일 정리
 
 ### Phase 3: 리팩토링 (Low) - 코드 품질
 1. [ ] LOW-001: 타입 힌트 일관성
 2. [ ] LOW-002: 네이밍 컨벤션 통일
 3. [ ] LOW-003: 스타일시트 분리
-4. [ ] LOW-004: 상수 파일 통합
+4. [ ] LOW-004: 미사용 import 정리
+5. [ ] LOW-005: random_config 타입 수정
 
 ---
 
 ## 참고 사항
 
-### 분석 방법론
-- Python/Qt (PySide6) 체크리스트 기반 분석
-- 정적 코드 분석
-- 잠재적 런타임 에러 시나리오 검토
+### 이전 분석 대비 개선된 점
+
+1. **transform_history.py**: JSON 로드 시 예외 처리 추가됨
+2. **preview.py**: QImage 생성 시 bytes_per_line 명시적 계산
+3. **options_panel.py**: 모듈 분리로 코드 구조 개선
 
 ### 추가 권장 사항
+
 1. **단위 테스트 추가**: 핵심 변환 로직(`image_ops.py`)에 대한 테스트 필요
 2. **로깅 시스템 도입**: 에러 추적을 위한 로깅 추가
 3. **설정 검증**: 설정값 로드 시 스키마 검증 추가 고려
+4. **상수 파일 통합**: `constants.py`로 하드코딩된 값들 중앙 관리
