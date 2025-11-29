@@ -401,3 +401,36 @@ class PreviewGraphicsView(QGraphicsView):
         self._original_size = original_size
         if self._image_item and not self._free_transform_mode:
             self._update_rotated_border()
+
+    def reset_corner_offsets(self) -> None:
+        """코너 위치 초기화"""
+        if self._image_item and self._free_transform_mode:
+            rect = self._image_item.boundingRect()
+            self._corner_positions = {
+                "top_left": QPointF(rect.left(), rect.top()),
+                "top_right": QPointF(rect.right(), rect.top()),
+                "bottom_right": QPointF(rect.right(), rect.bottom()),
+                "bottom_left": QPointF(rect.left(), rect.bottom()),
+            }
+            self._update_handles_position()
+
+    def set_uniform_offset(self, offset: float) -> None:
+        """모든 코너에 균일한 오프셋 적용"""
+        if self._image_item:
+            rect = self._image_item.boundingRect()
+            w, h = rect.width(), rect.height()
+            self._corner_positions = {
+                "top_left": QPointF(offset, offset),
+                "top_right": QPointF(w - offset, offset),
+                "bottom_right": QPointF(w - offset, h - offset),
+                "bottom_left": QPointF(offset, h - offset),
+            }
+            self._update_handles_position()
+
+            corners = [
+                (offset, offset),
+                (w - offset, offset),
+                (w - offset, h - offset),
+                (offset, h - offset),
+            ]
+            self.perspective_changed.emit(corners)

@@ -54,3 +54,9 @@ class PreviewWidget(QWidget):
 
     def set_rotation(self, angle: float, original_size: tuple[int, int]):
         self._view.set_rotation(angle, original_size)
+
+    def reset_corner_offsets(self):
+        self._view.reset_corner_offsets()
+
+    def set_uniform_offset(self, offset: float):
+        self._view.set_uniform_offset(offset)
