@@ -201,7 +201,6 @@ def save_jpeg_with_metadata(
     """
     # RGBA → RGB 변환 (JPEG는 투명도 지원 안 함)
     if img.mode == "RGBA":
-        # 흰색 배경으로 합성
         background = Image.new("RGB", img.size, (255, 255, 255))
         background.paste(img, mask=img.split()[3])
         img = background
@@ -212,12 +211,51 @@ def save_jpeg_with_metadata(
         exif_bytes = create_exif_bytes(metadata_overrides)
         img.save(output_path, quality=quality, optimize=True, exif=exif_bytes)
 
-        # 파일 시스템 타임스탬프도 변경
         dt_str = metadata_overrides.get("DateTimeOriginal") or metadata_overrides.get("datetime", "")
         if dt_str:
             set_file_times(output_path, dt_str)
     else:
         img.save(output_path, quality=quality, optimize=True)
+
+
+def save_webp_with_metadata(
+    img: Image.Image,
+    output_path: str,
+    metadata_overrides: Optional[dict] = None,
+    quality: int = 80,
+):
+    """WebP 파일을 메타데이터와 함께 저장
+
+    WebP는 EXIF를 지원하지만 Windows 탐색기에서 "촬영 날짜"로 표시되지 않음.
+    대신 파일 시스템 타임스탬프(만든 날짜/수정한 날짜)를 변경하여 대응.
+    quality=80: 손실 압축 (JPEG 대비 더 작은 파일 크기)
+    """
+    # WebP는 RGBA를 직접 지원하므로 RGB 변환 불필요
+    # 단, 모드가 지원되지 않는 경우만 변환
+    if img.mode not in ("RGB", "RGBA", "L", "LA"):
+        img = img.convert("RGBA") if "A" in img.mode else img.convert("RGB")
+
+    save_kwargs = {
+        "quality": quality,
+        "method": 4,  # 압축 품질 (0-6, 높을수록 느리지만 작은 파일)
+    }
+
+    if metadata_overrides is not None and len(metadata_overrides) > 0:
+        # WebP도 EXIF 지원 (Pillow 9.2+)
+        try:
+            exif_bytes = create_exif_bytes(metadata_overrides)
+            save_kwargs["exif"] = exif_bytes
+        except Exception:
+            pass  # EXIF 실패해도 저장은 계속
+
+        img.save(output_path, "WEBP", **save_kwargs)
+
+        # 파일 시스템 타임스탬프 변경 (Windows 탐색기 날짜 표시용)
+        dt_str = metadata_overrides.get("DateTimeOriginal") or metadata_overrides.get("datetime", "")
+        if dt_str:
+            set_file_times(output_path, dt_str)
+    else:
+        img.save(output_path, "WEBP", **save_kwargs)
 
 
 def set_file_times(filepath: str, datetime_str: str):

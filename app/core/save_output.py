@@ -2,7 +2,7 @@ from pathlib import Path
 from PIL import Image
 from typing import Optional
 
-from .metadata import save_jpeg_with_metadata
+from .metadata import save_jpeg_with_metadata, save_webp_with_metadata
 
 
 def create_output_folder(base_dir: str, options: dict = None) -> Path:
@@ -53,14 +53,15 @@ def create_output_folder(base_dir: str, options: dict = None) -> Path:
     return output_dir
 
 
-def get_unique_filename(output_dir: Path, original_name: str) -> Path:
-    """JPEG로 저장 - 원본 파일명 유지"""
+def get_unique_filename(output_dir: Path, original_name: str, output_format: str = "jpeg") -> Path:
+    """포맷에 맞는 파일명 생성"""
     stem = Path(original_name).stem
-    candidate = output_dir / f"{stem}.jpg"
+    ext = ".webp" if output_format == "webp" else ".jpg"
+    candidate = output_dir / f"{stem}{ext}"
 
     counter = 1
     while candidate.exists():
-        candidate = output_dir / f"{stem}_{counter}.jpg"
+        candidate = output_dir / f"{stem}_{counter}{ext}"
         counter += 1
 
     return candidate
@@ -71,16 +72,23 @@ def save_transformed_image(
     output_dir: Path,
     original_name: str,
     metadata_overrides: Optional[dict] = None,
+    output_format: str = "jpeg",
 ) -> Path:
-    """JPEG 저장 - EXIF DateTimeOriginal 메타데이터 포함"""
-    output_path = get_unique_filename(output_dir, original_name)
-    save_jpeg_with_metadata(img, str(output_path), metadata_overrides)
+    """이미지 저장 - 포맷별 메타데이터 처리"""
+    output_path = get_unique_filename(output_dir, original_name, output_format)
+
+    if output_format == "webp":
+        save_webp_with_metadata(img, str(output_path), metadata_overrides)
+    else:
+        save_jpeg_with_metadata(img, str(output_path), metadata_overrides)
+
     return output_path
 
 
 class OutputManager:
     def __init__(self, base_dir: str, options: dict = None):
         self.output_dir = create_output_folder(base_dir, options)
+        self.output_format = options.get("output_format", "jpeg") if options else "jpeg"
         self.saved_files: list[Path] = []
 
     def save(
@@ -89,9 +97,9 @@ class OutputManager:
         original_name: str,
         metadata_overrides: Optional[dict] = None,
     ) -> Path:
-        """JPEG로 저장 - metadata_overrides에 DateTimeOriginal 키로 날짜 전달"""
+        """이미지 저장 - 설정된 포맷으로 저장"""
         path = save_transformed_image(
-            img, self.output_dir, original_name, metadata_overrides
+            img, self.output_dir, original_name, metadata_overrides, self.output_format
         )
         self.saved_files.append(path)
         return path
