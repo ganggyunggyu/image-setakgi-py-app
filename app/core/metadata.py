@@ -1,6 +1,5 @@
 import piexif
 from PIL import Image
-from PIL.PngImagePlugin import PngInfo
 from typing import Optional
 from datetime import datetime
 import random
@@ -130,62 +129,6 @@ def save_with_exif(
         img.save(output_path, quality=quality, exif=exif_bytes)
     else:
         img.save(output_path, quality=quality)
-
-
-def create_png_metadata(overrides: dict) -> PngInfo:
-    """PNG용 tEXt 청크 메타데이터 생성
-
-    Windows 탐색기는 PNG의 대부분 메타데이터를 무시하고,
-    오직 'Creation Time' 텍스트 청크만 읽어서 "촬영 날짜(Date taken)"에 표시함.
-    Make/Model/Software는 PNG에 넣어도 Windows에서 안 보임 (ExifTool 등에서는 보임)
-    """
-    metadata = PngInfo()
-
-    # Windows "촬영 날짜(Date taken)" = PNG:CreationTime
-    if "DateTimeOriginal" in overrides or "datetime" in overrides:
-        dt_str = overrides.get("DateTimeOriginal") or overrides.get("datetime", "")
-        if dt_str:
-            # EXIF 형식(2024:01:01 12:00:00)을 ISO 형식으로 변환
-            try:
-                dt = datetime.strptime(dt_str, "%Y:%m:%d %H:%M:%S")
-                # Windows PNG Creation Time 형식
-                metadata.add_text("Creation Time", dt.strftime("%Y-%m-%dT%H:%M:%S"))
-            except ValueError:
-                metadata.add_text("Creation Time", dt_str)
-
-    if "Make" in overrides or "make" in overrides:
-        make = overrides.get("Make") or overrides.get("make", "")
-        if make:
-            metadata.add_text("Source", make)
-
-    if "Model" in overrides or "model" in overrides:
-        model = overrides.get("Model") or overrides.get("model", "")
-        if model:
-            metadata.add_text("Comment", model)
-
-    if "Software" in overrides:
-        metadata.add_text("Software", overrides["Software"])
-
-    return metadata
-
-
-def save_png_with_metadata(
-    img: Image.Image,
-    output_path: str,
-    metadata_overrides: Optional[dict] = None,
-):
-    """PNG 파일을 메타데이터와 함께 저장"""
-    # None이 아니고 빈 딕셔너리가 아닐 때만 메타데이터 적용
-    if metadata_overrides is not None and len(metadata_overrides) > 0:
-        png_info = create_png_metadata(metadata_overrides)
-        img.save(output_path, pnginfo=png_info)
-
-        # 파일 시스템 타임스탬프도 변경
-        dt_str = metadata_overrides.get("DateTimeOriginal") or metadata_overrides.get("datetime", "")
-        if dt_str:
-            set_file_times(output_path, dt_str)
-    else:
-        img.save(output_path)
 
 
 def save_jpeg_with_metadata(

@@ -14,8 +14,8 @@ from .random_config import (
 
 
 def generate_random_crop(max_range: float = CROP_RANGE) -> int:
-    """±max_range 범위 내에서 랜덤 크롭 값 생성 (정수)"""
-    return round(random.uniform(-max_range, max_range))
+    """0~max_range 범위 내에서 랜덤 크롭 값 생성 (정수, 양수만 = 자르기만)"""
+    return round(random.uniform(0, max_range))
 
 
 def generate_random_rotation(max_range: float = ROTATION_RANGE) -> float:
