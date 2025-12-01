@@ -1,7 +1,6 @@
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
 from PIL import Image
 
 from .metadata import save_jpeg_with_metadata, save_webp_with_metadata
@@ -76,35 +75,21 @@ def save_transformed_image(
     metadata_overrides: Optional[dict] = None,
     output_format: str = "jpeg",
 ) -> Path:
-    """이미지 저장 - 포맷별 메타데이터 처리"""
+    """이미지 저장 - 포맷별 처리
+
+    - WebP: 원본 크기로 리사이즈 후 저장 (투명 유지)
+    - JPEG: 크롭된 상태 그대로 저장 (흰배경 없음, 크기 달라짐)
+    """
     output_path = get_unique_filename(output_dir, original_name, output_format)
 
-    # JPG에서는 자유변형/랜덤변형으로 생긴 흰색 배경을 제거하기 위해
-    # 완전 흰색(255,255,255)만 남은 가장자리를 자동 크롭
-    if output_format == "jpeg":
-        if img.mode != "RGBA":
-            img = img.convert("RGBA")
-
-        data = np.array(img)
-        # 내용 픽셀 = 알파 있음(투명 아님) AND 순백색 아님
-        non_bg_mask = (
-            (data[..., 3] != 0)
-            & (
-                (data[..., 0] != 255)
-                | (data[..., 1] != 255)
-                | (data[..., 2] != 255)
-            )
-        )
-
-        if non_bg_mask.any():
-            ys, xs = np.nonzero(non_bg_mask)
-            top, bottom = ys.min(), ys.max()
-            left, right = xs.min(), xs.max()
-            img = img.crop((left, top, right + 1, bottom + 1))
-
+    # WebP: 원본 크기로 리사이즈 (투명 배경 유지)
     if output_format == "webp":
+        orig_size = img.info.get("orig_size")
+        if orig_size and img.size != orig_size:
+            img = img.resize(orig_size, Image.Resampling.LANCZOS)
         save_webp_with_metadata(img, str(output_path), metadata_overrides)
     else:
+        # JPEG: 크롭된 상태 그대로 저장 (흰배경 제거됨)
         save_jpeg_with_metadata(img, str(output_path), metadata_overrides)
 
     return output_path

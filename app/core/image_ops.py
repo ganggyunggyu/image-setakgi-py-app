@@ -198,6 +198,7 @@ def apply_transforms(
     crop: Optional[dict] = None,
 ) -> Image.Image:
     result = img.copy()
+    orig_size = None  # perspective_transform용 원본 크기
 
     if result.mode not in ("RGB", "RGBA"):
         result = result.convert("RGB")
@@ -213,6 +214,7 @@ def apply_transforms(
 
     if perspective_corners and len(perspective_corners) == 4:
         result = perspective_transform(result, perspective_corners)
+        orig_size = result.info.get("orig_size")
 
     if rotation != 0:
         result = rotate_and_crop(result, rotation)
@@ -228,6 +230,10 @@ def apply_transforms(
 
     if noise > 0:
         result = add_noise(result, noise)
+
+    # perspective_transform 원본 크기 복원 (다른 변환에서 info 사라짐)
+    if orig_size:
+        result.info["orig_size"] = orig_size
 
     return result
 
@@ -257,9 +263,7 @@ def perspective_transform(
         return img.copy()
 
     orig_w, orig_h = img.size
-    orig_mode = "RGBA" if img.mode == "RGBA" else "RGB"
 
-    # RGB로 처리 (JPEG 호환)
     if img.mode not in ("RGB", "RGBA"):
         img = img.convert("RGB")
 
@@ -292,24 +296,18 @@ def perspective_transform(
         Image.Transform.PERSPECTIVE,
         coeffs,
         Image.Resampling.BICUBIC,
-        fillcolor=(255, 255, 255, 0)
+        fillcolor=(0, 0, 0, 0)
     )
 
-    alpha = result.split()[-1]
-    bbox = alpha.getbbox()
+    bbox = result.split()[-1].getbbox()
 
     if bbox:
-        left, top, right, bottom = bbox
-        result = result.crop((left, top, right, bottom))
-        alpha = alpha.crop((left, top, right, bottom))
+        result = result.crop(bbox)
 
-    if orig_mode == "RGBA":
-        result.putalpha(alpha)
-        return result
+    # 원본 크기 정보를 info에 저장 (저장 시 포맷별 처리용)
+    result.info["orig_size"] = (orig_w, orig_h)
 
-    flattened = Image.new("RGB", result.size, (255, 255, 255))
-    flattened.paste(result, mask=alpha)
-    return flattened
+    return result
 
 
 def get_image_info(filepath: str) -> dict:
