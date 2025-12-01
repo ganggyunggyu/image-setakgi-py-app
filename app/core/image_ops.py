@@ -1,8 +1,8 @@
-import numpy as np
 import math
-from PIL import Image, ImageEnhance, ImageFilter
-from typing import Optional, List, Tuple
-import io
+from typing import List, Optional, Tuple
+
+import numpy as np
+from PIL import Image, ImageEnhance
 
 
 def get_inscribed_rect_size(orig_w: int, orig_h: int, angle_deg: float) -> tuple[int, int]:
