@@ -35,26 +35,26 @@ READABLE_TAGS = {
 
 def read_exif(filepath: str) -> dict:
     try:
-        img = Image.open(filepath)
-        if "exif" not in img.info:
-            return {"_raw": None, "_error": None}
+        with Image.open(filepath) as img:
+            if "exif" not in img.info:
+                return {"_raw": None, "_error": None}
 
-        exif_dict = piexif.load(img.info["exif"])
-        result = {"_raw": exif_dict}
+            exif_dict = piexif.load(img.info["exif"])
+            result = {"_raw": exif_dict}
 
-        for name, (tag_id, ifd) in READABLE_TAGS.items():
-            ifd_data = exif_dict.get(ifd, {})
-            if tag_id in ifd_data:
-                value = ifd_data[tag_id]
-                if isinstance(value, bytes):
-                    try:
-                        value = value.decode("utf-8", errors="ignore").strip("\x00")
-                    except:
-                        value = str(value)
-                result[name] = value
+            for name, (tag_id, ifd) in READABLE_TAGS.items():
+                ifd_data = exif_dict.get(ifd, {})
+                if tag_id in ifd_data:
+                    value = ifd_data[tag_id]
+                    if isinstance(value, bytes):
+                        try:
+                            value = value.decode("utf-8", errors="ignore").strip("\x00")
+                        except (UnicodeDecodeError, AttributeError):
+                            value = str(value)
+                    result[name] = value
 
-        return result
-    except Exception as e:
+            return result
+    except (OSError, IOError) as e:
         return {"_raw": None, "_error": str(e)}
 
 

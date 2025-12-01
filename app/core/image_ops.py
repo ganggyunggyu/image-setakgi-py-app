@@ -241,17 +241,21 @@ def apply_transforms(
 def find_perspective_coeffs(
     source_coords: List[Tuple[float, float]],
     target_coords: List[Tuple[float, float]]
-) -> Tuple:
-    matrix = []
-    for s, t in zip(source_coords, target_coords):
-        matrix.append([t[0], t[1], 1, 0, 0, 0, -s[0]*t[0], -s[0]*t[1]])
-        matrix.append([0, 0, 0, t[0], t[1], 1, -s[1]*t[0], -s[1]*t[1]])
+) -> Optional[Tuple]:
+    """원근 변환 계수 계산. 특이 행렬이면 None 반환."""
+    try:
+        matrix = []
+        for s, t in zip(source_coords, target_coords):
+            matrix.append([t[0], t[1], 1, 0, 0, 0, -s[0]*t[0], -s[0]*t[1]])
+            matrix.append([0, 0, 0, t[0], t[1], 1, -s[1]*t[0], -s[1]*t[1]])
 
-    A = np.matrix(matrix, dtype=np.float32)
-    B = np.array(source_coords).reshape(8)
+        A = np.matrix(matrix, dtype=np.float32)
+        B = np.array(source_coords).reshape(8)
 
-    res = np.dot(np.linalg.inv(A.T * A) * A.T, B)
-    return tuple(np.array(res).reshape(8))
+        res = np.dot(np.linalg.inv(A.T * A) * A.T, B)
+        return tuple(np.array(res).reshape(8))
+    except np.linalg.LinAlgError:
+        return None
 
 
 def perspective_transform(
@@ -290,6 +294,8 @@ def perspective_transform(
     adjusted_corners = [(x - min_x, y - min_y) for x, y in corners]
 
     coeffs = find_perspective_coeffs(source_corners, adjusted_corners)
+    if coeffs is None:
+        return img.copy()
 
     result = img_rgba.transform(
         (output_w, output_h),

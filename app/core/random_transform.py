@@ -1,8 +1,7 @@
 """랜덤 변형 값 생성기"""
-import random
 import platform
+import random
 from datetime import datetime, timedelta
-from typing import Optional
 
 from .random_config import (
     CROP_RANGE,
