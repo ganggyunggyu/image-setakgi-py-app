@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import QObject, QRunnable, Signal
-from PIL import Image
+from PIL import Image, ImageOps
 
 from app.core.preview import create_thumbnail, MAX_PREVIEW_SIZE
 from app.core.image_ops import apply_transforms
@@ -33,6 +33,9 @@ class TransformWorker(QRunnable):
     def run(self):
         try:
             img = Image.open(self.filepath)
+
+            # EXIF Orientation 태그에 따라 이미지 자동 회전
+            img = ImageOps.exif_transpose(img) if img else img
 
             perspective_corners: Optional[list] = None
             if self.options.get("perspective_corners"):
