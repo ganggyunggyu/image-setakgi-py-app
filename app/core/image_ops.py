@@ -257,10 +257,13 @@ def perspective_transform(
         return img.copy()
 
     orig_w, orig_h = img.size
+    orig_mode = "RGBA" if img.mode == "RGBA" else "RGB"
 
     # RGB로 처리 (JPEG 호환)
     if img.mode not in ("RGB", "RGBA"):
         img = img.convert("RGB")
+
+    img_rgba = img.convert("RGBA")
 
     source_corners = [
         (0, 0),
@@ -268,13 +271,6 @@ def perspective_transform(
         (orig_w, orig_h),
         (0, orig_h)
     ]
-
-    # 코너별 오프셋 계산 (빈 공간 크기 추정용)
-    offsets = []
-    for (ox, oy), (cx, cy) in zip(source_corners, corners):
-        offsets.append(abs(cx - ox))
-        offsets.append(abs(cy - oy))
-    max_offset = max(offsets) if offsets else 0
 
     xs = [c[0] for c in corners]
     ys = [c[1] for c in corners]
@@ -291,28 +287,29 @@ def perspective_transform(
 
     coeffs = find_perspective_coeffs(source_corners, adjusted_corners)
 
-    # 흰색 배경으로 변형 (투명 대신)
-    fill = (255, 255, 255) if img.mode == "RGB" else (255, 255, 255, 255)
-    result = img.transform(
+    result = img_rgba.transform(
         (output_w, output_h),
         Image.Transform.PERSPECTIVE,
         coeffs,
         Image.Resampling.BICUBIC,
-        fillcolor=fill
+        fillcolor=(255, 255, 255, 0)
     )
 
-    # 빈 공간(흰색 배경) 없이 중앙 크롭
-    # 오프셋의 2배만큼 안쪽으로 크롭해서 빈 공간 완전 제거
-    margin = int(max_offset * 2) + 2
-    crop_w = max(10, output_w - margin * 2)
-    crop_h = max(10, output_h - margin * 2)
+    alpha = result.split()[-1]
+    bbox = alpha.getbbox()
 
-    left = (output_w - crop_w) // 2
-    top = (output_h - crop_h) // 2
-    right = left + crop_w
-    bottom = top + crop_h
+    if bbox:
+        left, top, right, bottom = bbox
+        result = result.crop((left, top, right, bottom))
+        alpha = alpha.crop((left, top, right, bottom))
 
-    return result.crop((left, top, right, bottom))
+    if orig_mode == "RGBA":
+        result.putalpha(alpha)
+        return result
+
+    flattened = Image.new("RGB", result.size, (255, 255, 255))
+    flattened.paste(result, mask=alpha)
+    return flattened
 
 
 def get_image_info(filepath: str) -> dict:
