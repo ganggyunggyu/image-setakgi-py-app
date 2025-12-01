@@ -117,17 +117,12 @@ class OptionsPanel(QWidget):
     def _connect_signals(self):
         self._crop_widget.crop_changed.connect(self._emit_change)
         self._rotation.value_changed.connect(self._emit_change)
-        self._perspective.perspective_changed.connect(self._on_perspective_change)
         self._brightness.value_changed.connect(self._emit_change)
         self._contrast.value_changed.connect(self._emit_change)
         self._saturation.value_changed.connect(self._emit_change)
         self._noise.value_changed.connect(self._emit_change)
         self._output_format.format_changed.connect(self._emit_change)
         self._exif_panel.exif_changed.connect(self._emit_change)
-
-    def _on_perspective_change(self, offset: float):
-        self.perspective_offset_changed.emit(offset)
-        self._emit_change()
 
     def _on_free_transform_toggle(self, checked: bool):
         self.free_transform_toggled.emit(checked)
