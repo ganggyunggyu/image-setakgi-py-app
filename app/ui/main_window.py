@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QThreadPool, QRunnable, QObject
 from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent, QPixmap
-from PIL import Image, ImageOps
+from PIL import Image
 from pathlib import Path
 from typing import Optional
 
@@ -165,6 +165,7 @@ class MainWindow(QMainWindow):
         self._options.options_changed.connect(self._on_options_changed)
         self._options.free_transform_toggled.connect(self._on_free_transform_toggle)
         self._options.reset_requested.connect(self._on_reset_requested)
+        self._options.perspective_offset_changed.connect(self._on_perspective_offset_changed)
         self._preview.perspective_changed.connect(self._on_perspective_changed)
 
         self._output_btn.clicked.connect(self._select_output_folder)
@@ -332,12 +333,7 @@ class MainWindow(QMainWindow):
     def _load_image(self, filepath: str):
         try:
             self._loading_new_image = True
-            img = Image.open(filepath)
-
-            # EXIF Orientation 태그에 따라 이미지 자동 회전
-            img = ImageOps.exif_transpose(img) if img else img
-
-            self._current_image = img
+            self._current_image = Image.open(filepath)
             w, h = self._current_image.size
 
             self._options.set_original_size(w, h)
@@ -413,6 +409,19 @@ class MainWindow(QMainWindow):
     def _on_perspective_changed(self, corners: list):
         self._perspective_corners = corners
         self._update_preview()
+
+    def _on_perspective_offset_changed(self, offset: float):
+        """수동 perspective offset 변경 시 호출"""
+        if self._current_image is None:
+            return
+
+        if offset == 0:
+            self._perspective_corners = None
+            self._preview.reset_corner_offsets()
+        else:
+            # 프리뷰 위젯의 set_uniform_offset 사용
+            # perspective_changed 시그널이 발생하여 _on_perspective_changed에서 처리됨
+            self._preview.set_uniform_offset(offset)
 
     def _on_reset_requested(self):
         self._perspective_corners = None
@@ -546,10 +555,6 @@ class MainWindow(QMainWindow):
         for filepath in self._files:
             try:
                 img = Image.open(filepath)
-
-                # EXIF Orientation 태그에 따라 이미지 자동 회전
-                img = ImageOps.exif_transpose(img) if img else img
-
                 orig_w, orig_h = img.size
                 img.close()
 
