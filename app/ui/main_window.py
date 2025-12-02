@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QApplication,
 )
 from PySide6.QtCore import Qt, Signal, QThreadPool, QRunnable, QObject
-from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent, QPixmap
+from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent, QPixmap, QIcon
 from PIL import Image
 from pathlib import Path
 from typing import Optional
@@ -43,6 +43,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Image Setakgi - 이미지 세탁기")
         self.setMinimumSize(1200, 800)
+
+        icon_path = Path(__file__).parent.parent / "resources" / "icon.png"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
 
         # Windows 드래그앤 드랍 지원 - MainWindow 레벨
         self.setAcceptDrops(True)
