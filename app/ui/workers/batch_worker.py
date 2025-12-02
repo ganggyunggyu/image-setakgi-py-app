@@ -3,7 +3,12 @@
 ProcessPoolExecutor를 사용해 이미지 처리를 병렬화
 """
 from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor, as_completed, BrokenProcessPool
+from concurrent.futures import ProcessPoolExecutor, as_completed
+try:
+    from concurrent.futures.process import BrokenProcessPool
+except ImportError:  # Python 일부 버전 호환
+    class BrokenProcessPool(RuntimeError):  # type: ignore
+        """ProcessPoolExecutor가 비정상 종료됐을 때 사용되는 예외"""
 import multiprocessing as mp
 
 from PySide6.QtCore import QObject, QThread, Signal
