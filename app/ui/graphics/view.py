@@ -80,9 +80,11 @@ class PreviewGraphicsView(QGraphicsView):
         """이미지 설정"""
         saved_corners = self._corner_positions.copy() if not reset_transform and self._free_transform_mode else {}
 
-        self._scene.clear()
-        self._handles.clear()
+        # scene.clear() 전에 Python 참조 해제 (C++ 객체 삭제 후 접근 방지)
+        self._image_item = None
         self._border_rect = None
+        self._handles.clear()
+        self._scene.clear()
         self._rotation_angle = 0.0
         self._original_size = (0, 0)
 
