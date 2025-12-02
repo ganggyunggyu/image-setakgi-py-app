@@ -138,26 +138,11 @@ class MainWindow(QMainWindow):
         self._status_label.setStyleSheet("color: #ffffff; font-weight: bold;")
         right_layout.addWidget(self._status_label)
 
-        action_layout = QHBoxLayout()
-        self._output_btn = QPushButton("출력 폴더 선택")
-        self._convert_btn = QPushButton("변환 실행")
-        self._convert_btn.setStyleSheet(
-            "background-color: #4285f4; color: white; font-weight: bold; padding: 10px;"
-        )
-        action_layout.addWidget(self._output_btn)
-        action_layout.addWidget(self._convert_btn)
-        right_layout.addLayout(action_layout)
-
-        random_layout = QHBoxLayout()
         self._random_btn = QPushButton("랜덤 변환 실행")
         self._random_btn.setStyleSheet(
             "background-color: #9c27b0; color: white; font-weight: bold; padding: 10px;"
         )
-        random_layout.addWidget(self._random_btn)
-        right_layout.addLayout(random_layout)
-
-        self._output_path_label = QLabel("출력 폴더: 미선택")
-        right_layout.addWidget(self._output_path_label)
+        right_layout.addWidget(self._random_btn)
 
         splitter.addWidget(right_panel)
 
@@ -180,8 +165,6 @@ class MainWindow(QMainWindow):
         self._options.perspective_offset_changed.connect(self._on_perspective_offset_changed)
         self._preview.perspective_changed.connect(self._on_perspective_changed)
 
-        self._output_btn.clicked.connect(self._select_output_folder)
-        self._convert_btn.clicked.connect(self._start_conversion)
         self._random_btn.clicked.connect(self._start_random_conversion)
 
     def _apply_styles(self):
@@ -276,7 +259,6 @@ class MainWindow(QMainWindow):
     def _finalize_processing(self, label: str):
         self._overlay.hide_overlay()
         self._progress.setVisible(False)
-        self._convert_btn.setEnabled(True)
         self._random_btn.setEnabled(True)
         self._random_mode = False
         self._show_completion_feedback(label)
@@ -503,7 +485,6 @@ class MainWindow(QMainWindow):
         self._progress.setVisible(True)
         self._progress.setMaximum(len(self._files))
         self._progress.setValue(0)
-        self._convert_btn.setEnabled(False)
         self._random_btn.setEnabled(False)
         self._set_status_message("변환 중...", "#90caf9")
         self._overlay.show_message("변환 중")
@@ -582,7 +563,6 @@ class MainWindow(QMainWindow):
         self._progress.setVisible(True)
         self._progress.setMaximum(len(self._files))
         self._progress.setValue(0)
-        self._convert_btn.setEnabled(False)
         self._random_btn.setEnabled(False)
         self._set_status_message("랜덤 변형 중...", "#90caf9")
         self._overlay.show_message("랜덤 변형 중")
