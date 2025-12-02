@@ -3,7 +3,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 from PIL import Image, ImageEnhance
-
+import cv2
 
 def get_inscribed_rect_size(orig_w: int, orig_h: int, angle_deg: float) -> tuple[int, int]:
     """회전 후 빈 공간 없이 추출 가능한 최대 직사각형 크기 (원본 비율 유지)"""
@@ -197,8 +197,13 @@ def apply_transforms(
     perspective_corners: Optional[List[Tuple[float, float]]] = None,
     crop: Optional[dict] = None,
 ) -> Image.Image:
+    """이미지 변환 적용
+
+    노이즈는 저장 시점(crop_background 후)에 적용됨
+    → noise 값은 result.info["noise"]에 저장
+    """
     result = img.copy()
-    orig_size = None  # perspective_transform용 원본 크기
+    orig_size = None
 
     if result.mode not in ("RGB", "RGBA"):
         result = result.convert("RGB")
@@ -218,6 +223,7 @@ def apply_transforms(
 
     if rotation != 0:
         result = rotate_and_crop(result, rotation)
+        result.info["rotation"] = rotation  # 저장 시 내접 크롭용
 
     if brightness != 0:
         result = adjust_brightness(result, brightness)
@@ -228,10 +234,10 @@ def apply_transforms(
     if saturation != 0:
         result = adjust_saturation(result, saturation)
 
+    # 노이즈는 crop_background 후에 적용하기 위해 info에 저장
     if noise > 0:
-        result = add_noise(result, noise)
+        result.info["noise"] = noise
 
-    # perspective_transform 원본 크기 복원 (다른 변환에서 info 사라짐)
     if orig_size:
         result.info["orig_size"] = orig_size
 
@@ -305,15 +311,181 @@ def perspective_transform(
         fillcolor=(0, 0, 0, 0)
     )
 
-    bbox = result.split()[-1].getbbox()
-
-    if bbox:
-        result = result.crop(bbox)
-
-    # 원본 크기 정보를 info에 저장 (저장 시 포맷별 처리용)
-    result.info["orig_size"] = (orig_w, orig_h)
+    # 투명 영역 크롭은 저장 시점에서 처리 (crop_transparent)
+    # orig_size 저장 안 함 - 내접 직사각형 크롭이 크기 조절함
 
     return result
+
+
+def _detect_bg_color(
+    np_img: np.ndarray, sample_size: int = 10, white_thresh: int = 200
+) -> str:
+    """모서리 샘플링으로 배경색 자동 감지 (white/black)"""
+    try:
+        import cv2
+    except ImportError:
+        return "black"
+
+    h, w = np_img.shape[:2]
+    s = min(sample_size, h // 2, w // 2)
+
+    corners = [
+        np_img[0:s, 0:s],
+        np_img[0:s, w - s : w],
+        np_img[h - s : h, 0:s],
+        np_img[h - s : h, w - s : w],
+    ]
+
+    means = []
+    for c in corners:
+        if c.size == 0:
+            continue
+        gray = cv2.cvtColor(c, cv2.COLOR_RGB2GRAY) if c.ndim == 3 else c
+        means.append(float(gray.mean()))
+
+    if not means:
+        return "black"
+
+    avg = float(np.mean(means))
+    return "white" if avg >= white_thresh else "black"
+
+
+def crop_background(
+    img: Image.Image,
+    threshold: int = 12,
+    padding: int = 0,
+    min_area: int = 1000,
+    morph_kernel: tuple[int, int] = (5, 5),
+) -> Image.Image:
+    """배경 크롭 (검정/흰색 자동 감지)
+
+    - threshold: 밝기 기준값 (작을수록 더 어두운 픽셀을 전경으로 판단)
+    - padding: 크롭 결과에 추가로 남길 픽셀 수
+    - min_area: 전경 영역이 이보다 작으면 크롭하지 않음
+    - morph_kernel: 노이즈 제거용 모폴로지 커널 크기
+    """
+
+    np_img = np.array(img.convert("RGB"))
+    h, w = np_img.shape[:2]
+
+    gray = cv2.cvtColor(np_img, cv2.COLOR_RGB2GRAY)
+    bg_color = _detect_bg_color(np_img)
+
+    if bg_color == "white":
+        _, fg = cv2.threshold(gray, 255 - threshold, 255, cv2.THRESH_BINARY_INV)
+    else:
+        _, fg = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)
+
+    # 노이즈 제거
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, morph_kernel)
+    fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, kernel, iterations=2)
+    fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, kernel, iterations=1)
+
+    contours, _ = cv2.findContours(fg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return img
+
+    # 병합 바운딩박스 계산
+    x_min, y_min, x_max, y_max = w, h, 0, 0
+    total_area = 0
+
+    for c in contours:
+        x, y, cw, ch = cv2.boundingRect(c)
+        total_area += cw * ch
+        x_min = min(x_min, x)
+        y_min = min(y_min, y)
+        x_max = max(x_max, x + cw)
+        y_max = max(y_max, y + ch)
+
+    if total_area < min_area:
+        return img
+
+    # padding 적용 및 경계 보정
+    x_min = max(0, int(x_min - padding))
+    y_min = max(0, int(y_min - padding))
+    x_max = min(w, int(x_max + padding))
+    y_max = min(h, int(y_max + padding))
+
+    if x_min == 0 and y_min == 0 and x_max == w and y_max == h:
+        return img
+
+    return img.crop((x_min, y_min, x_max, y_max))
+
+
+def crop_transparent(img: Image.Image, min_alpha: int = 10) -> Image.Image:
+    """RGBA 이미지에서 투명 영역을 제거하는 내접 직사각형 크롭
+
+    perspective_transform 후 빈 공간(alpha=0) 제거용
+    - 최대 면적 직사각형 찾기 (샘플링으로 O(n) 최적화)
+    """
+    if img.mode != "RGBA":
+        return img
+
+    alpha = np.array(img.split()[3])
+    h, w = alpha.shape
+    opaque = alpha >= min_alpha
+
+    # 각 행에서 불투명 픽셀의 시작/끝 위치 찾기
+    row_left = np.full(h, w, dtype=np.int32)
+    row_right = np.zeros(h, dtype=np.int32)
+
+    for y in range(h):
+        cols = np.where(opaque[y, :])[0]
+        if len(cols) > 0:
+            row_left[y] = cols[0]
+            row_right[y] = cols[-1] + 1
+
+    # 유효한 행만 사용
+    valid_mask = row_right > row_left
+    if not np.any(valid_mask):
+        return img
+
+    valid_indices = np.where(valid_mask)[0]
+    if len(valid_indices) == 0:
+        return img
+
+    # 샘플링할 행 선택 (최대 200개)
+    n_samples = min(200, len(valid_indices))
+    sample_step = max(1, len(valid_indices) // n_samples)
+    sampled_rows = valid_indices[::sample_step]
+
+    best_area = 0
+    best_rect = (0, 0, w, h)
+
+    for top_row in sampled_rows:
+        left_max = row_left[top_row]
+        right_min = row_right[top_row]
+
+        for bottom_row in range(top_row, valid_indices[-1] + 1, sample_step):
+            if row_right[bottom_row] <= row_left[bottom_row]:
+                continue
+
+            left_max = max(left_max, row_left[bottom_row])
+            right_min = min(right_min, row_right[bottom_row])
+
+            if left_max >= right_min:
+                break
+
+            width = right_min - left_max
+            height = bottom_row - top_row + 1
+            area = width * height
+
+            if area > best_area:
+                best_area = area
+                best_rect = (int(left_max), top_row, int(right_min), bottom_row + 1)
+
+    left, top, right, bottom = best_rect
+
+    if left >= right or top >= bottom or best_area == 0:
+        bbox = img.split()[3].point(lambda p: 255 if p >= min_alpha else 0).getbbox()
+        if bbox:
+            return img.crop(bbox)
+        return img
+
+    if left == 0 and top == 0 and right == w and bottom == h:
+        return img
+
+    return img.crop((left, top, right, bottom))
 
 
 def get_image_info(filepath: str) -> dict:

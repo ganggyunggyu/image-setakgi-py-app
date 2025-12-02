@@ -3,6 +3,7 @@ from typing import Optional
 
 from PIL import Image
 
+from .image_ops import add_noise, crop_background, crop_transparent
 from .metadata import save_jpeg_with_metadata, save_webp_with_metadata
 
 
@@ -75,21 +76,57 @@ def save_transformed_image(
     metadata_overrides: Optional[dict] = None,
     output_format: str = "jpeg",
 ) -> Path:
-    """이미지 저장 - 포맷별 처리
+    """이미지 저장
 
-    - WebP: 원본 크기로 리사이즈 후 저장 (투명 유지)
-    - JPEG: 크롭된 상태 그대로 저장 (흰배경 없음, 크기 달라짐)
+    1. 원본 크기로 리사이즈
+    2. 투명 영역 크롭 (RGBA 알파 채널 기반)
+    3. JPEG: RGB 변환 + 배경 크롭
+    4. 노이즈 적용 (크롭 후)
     """
     output_path = get_unique_filename(output_dir, original_name, output_format)
 
-    # WebP: 원본 크기로 리사이즈 (투명 배경 유지)
+    # info 값 추출 (crop 후 info 사라짐)
+    noise_value = img.info.get("noise", 0)
+    rotation_value = img.info.get("rotation", 0)
+
+    # 1. 원본 크기로 리사이즈
+    orig_size = img.info.get("orig_size")
+    if orig_size and img.size != orig_size:
+        img = img.resize(orig_size, Image.Resampling.LANCZOS)
+
+    # 2. 투명 영역 크롭 (RGBA인 경우, RGB 변환 전에 처리)
+    if img.mode == "RGBA":
+        img = crop_transparent(img)
+
+    # 3. JPEG: RGB 변환 + 배경 크롭 (흰색/검정 자동 감지)
+    if output_format == "jpeg":
+        if img.mode == "RGBA":
+            # 흰색 배경으로 변환 (블로그 업로드 시 자연스러움)
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            bg.paste(img, mask=img.split()[3])
+            img = bg
+        else:
+            img = img.convert("RGB")
+        img = crop_background(img)
+
+        # 회전된 이미지면 모서리 삼각형 제거 (회전 각도 비례 크롭)
+        if rotation_value != 0:
+            import math
+
+            w, h = img.size
+            angle_rad = math.radians(abs(rotation_value))
+            # 삼각형 높이 + 안전 마진 (JPEG 압축 아티팩트 고려)
+            margin = int(min(w, h) * math.tan(angle_rad) * 0.6) + 2
+            if margin > 0 and margin * 2 < min(w, h):
+                img = img.crop((margin, margin, w - margin, h - margin))
+
+    # 3. 노이즈 적용 (크롭 후)
+    if noise_value > 0:
+        img = add_noise(img, noise_value)
+
     if output_format == "webp":
-        orig_size = img.info.get("orig_size")
-        if orig_size and img.size != orig_size:
-            img = img.resize(orig_size, Image.Resampling.LANCZOS)
         save_webp_with_metadata(img, str(output_path), metadata_overrides)
     else:
-        # JPEG: 크롭된 상태 그대로 저장 (흰배경 제거됨)
         save_jpeg_with_metadata(img, str(output_path), metadata_overrides)
 
     return output_path
