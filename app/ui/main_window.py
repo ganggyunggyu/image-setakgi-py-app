@@ -23,6 +23,7 @@ from .preview_widget import PreviewWidget
 from .options_panel import OptionsPanel
 from .log_widget import LogWidget
 from .workers import TransformWorker, WorkerSignals
+from .workers.batch_worker import BatchTransformWorker
 from .widgets import FileListWidget
 from app.core.preview import PreviewThread, pil_to_qpixmap, create_thumbnail, MAX_PREVIEW_SIZE
 from app.core.image_ops import apply_transforms
@@ -124,6 +125,7 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self._progress)
 
         self._status_label = QLabel("")
+        self._status_label.setStyleSheet("color: #ffffff; font-weight: bold;")
         right_layout.addWidget(self._status_label)
 
         action_layout = QHBoxLayout()
@@ -240,6 +242,37 @@ class MainWindow(QMainWindow):
                 background-color: #4285f4;
             }
             """
+        )
+
+    def _set_status_message(self, text: str, color: str = "#ffffff"):
+        self._status_label.setText(text)
+        self._status_label.setStyleSheet(f"color: {color}; font-weight: bold;")
+
+    def _show_completion_feedback(self, label: str):
+        success = self._completed
+        failed = len(self._failed)
+        total = success + failed
+        if total == 0:
+            return
+
+        color = "#4caf50" if failed == 0 else "#ff9800"
+        self._set_status_message(f"{label}: 성공 {success}개 / 실패 {failed}개", color)
+        QMessageBox.information(
+            self,
+            label,
+            f"총 {total}개 처리\n성공 {success}개, 실패 {failed}개",
+        )
+
+    def _finalize_processing(self, label: str):
+        self._progress.setVisible(False)
+        self._convert_btn.setEnabled(True)
+        self._random_btn.setEnabled(True)
+        self._random_mode = False
+        self._show_completion_feedback(label)
+        self._log_widget.add_separator()
+        self._log_widget.add_log(
+            f"{label}: 성공 {self._completed}개, 실패 {len(self._failed)}개",
+            "info",
         )
 
     def _add_files(self, files: list[str]):
@@ -455,25 +488,37 @@ class MainWindow(QMainWindow):
         self._progress.setMaximum(len(self._files))
         self._progress.setValue(0)
         self._convert_btn.setEnabled(False)
+        self._random_btn.setEnabled(False)
+        self._set_status_message("변환 중...", "#90caf9")
 
         self._completed = 0
         self._failed = []
-        self._workers = []
 
         options = self._options.get_options()
         output_manager = OutputManager(output_dir, options)
 
         if self._perspective_corners:
             options["perspective_corners"] = self._perspective_corners
+            # 썸네일 크기 저장 (원근 변형 스케일링용)
+            if self._current_image:
+                thumb = create_thumbnail(self._current_image, MAX_PREVIEW_SIZE)
+                options["thumb_w"] = thumb.size[0]
+                options["thumb_h"] = thumb.size[1]
 
-        for filepath in self._files:
-            worker = TransformWorker(filepath, options, output_manager)
-            worker.setAutoDelete(False)
-            worker.signals.finished.connect(
-                self._on_worker_finished, Qt.ConnectionType.QueuedConnection
-            )
-            self._workers.append(worker)
-            self._thread_pool.start(worker)
+        # 병렬 배치 처리 (멀티프로세스)
+        self._batch_worker = BatchTransformWorker(
+            self._files,
+            options,
+            output_manager.get_output_dir(),
+            options.get("output_format", "jpeg"),
+        )
+        self._batch_worker.signals.finished.connect(
+            self._on_worker_finished, Qt.ConnectionType.QueuedConnection
+        )
+        self._batch_worker.signals.all_done.connect(
+            self._on_batch_done, Qt.ConnectionType.QueuedConnection
+        )
+        self._batch_worker.start()
 
         self._output_manager = output_manager
 
@@ -490,23 +535,16 @@ class MainWindow(QMainWindow):
 
         total_done = self._completed + len(self._failed)
         self._progress.setValue(total_done)
+        if self._random_mode and total_done >= len(self._files):
+            self._on_random_done()
 
-        if total_done >= len(self._files):
-            self._progress.setVisible(False)
-            self._convert_btn.setEnabled(True)
-            self._random_btn.setEnabled(True)
-            self._workers.clear()
-            self._random_mode = False
+    def _on_batch_done(self):
+        """배치 처리 완료"""
+        self._finalize_processing("변환 완료")
 
-            self._status_label.setText("변환 완료")
-            self._log_widget.add_separator()
-            self._log_widget.add_log(
-                f"변환 완료: 성공 {self._completed}개, 실패 {len(self._failed)}개", "info"
-            )
-
-            # 출력 폴더 자동 열기 (주석처리)
-            # output_dir = self._output_manager.get_output_dir()
-            # QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_dir)))
+    def _on_random_done(self):
+        """랜덤 변환 완료"""
+        self._finalize_processing("랜덤 변환 완료")
 
     def _start_random_conversion(self):
         """랜덤 변형 실행 - 각 이미지에 다른 랜덤 값 적용"""
@@ -529,6 +567,7 @@ class MainWindow(QMainWindow):
         self._progress.setValue(0)
         self._convert_btn.setEnabled(False)
         self._random_btn.setEnabled(False)
+        self._set_status_message("랜덤 변형 중...", "#90caf9")
 
         self._completed = 0
         self._failed = []
@@ -583,6 +622,9 @@ class MainWindow(QMainWindow):
                 self._failed.append((filepath, str(e)))
 
         self._output_manager = output_manager
+        total_done = self._completed + len(self._failed)
+        if total_done >= len(self._files):
+            self._on_random_done()
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         """Windows 드래그앤 드랍 - MainWindow 레벨 지원"""
