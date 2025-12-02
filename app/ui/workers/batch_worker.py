@@ -20,13 +20,19 @@ from app.core.save_output import save_transformed_image
 
 
 def _init_worker():
-    """멀티프로세스 워커 초기화: OpenCV 내부 스레드 제한"""
+    """멀티프로세스 워커 초기화: OpenCV 내부 스레드 완전 비활성화"""
+    import os
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+    os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
     try:
         import cv2
-
-        cv2.setNumThreads(1)
+        cv2.setNumThreads(0)
     except Exception:
-        return
+        pass
 
 
 def _process_single_image(args: dict) -> dict:
@@ -139,64 +145,69 @@ class BatchTransformWorker(QThread):
         self._cancelled = True
 
     def run(self):
-        """병렬 처리 실행"""
+        """병렬 처리 실행 (실패 시 순차 처리로 폴백)"""
+        tasks = [
+            {
+                "filepath": f,
+                "options": self.options,
+                "output_dir": self.output_dir,
+                "output_format": self.output_format,
+            }
+            for f in self.files
+        ]
+
+        total = len(tasks)
+        completed = 0
+
         try:
-            # 작업 목록 생성
-            tasks = [
-                {
-                    "filepath": f,
-                    "options": self.options,
-                    "output_dir": self.output_dir,
-                    "output_format": self.output_format,
-                }
-                for f in self.files
-            ]
-
-            total = len(tasks)
-            completed = 0
-
             ctx = mp.get_context("spawn")
-            try:
-                with ProcessPoolExecutor(
-                    max_workers=self.max_workers,
-                    initializer=_init_worker,
-                    mp_context=ctx,
-                ) as executor:
-                    futures = {executor.submit(_process_single_image, t): t for t in tasks}
+            with ProcessPoolExecutor(
+                max_workers=self.max_workers,
+                initializer=_init_worker,
+                mp_context=ctx,
+            ) as executor:
+                futures = {executor.submit(_process_single_image, t): t for t in tasks}
 
-                    for future in as_completed(futures):
-                        if self._cancelled:
-                            executor.shutdown(wait=False, cancel_futures=True)
-                            break
+                for future in as_completed(futures):
+                    if self._cancelled:
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        break
 
-                        try:
-                            result = future.result()
-                        except Exception as e:
-                            task = futures[future]
-                            result = {
-                                "filepath": task["filepath"],
-                                "success": False,
-                                "result": str(e),
-                                "options": {},
-                            }
+                    try:
+                        result = future.result()
+                    except Exception as e:
+                        task = futures[future]
+                        result = {
+                            "filepath": task["filepath"],
+                            "success": False,
+                            "result": str(e),
+                            "options": {},
+                        }
 
-                        completed += 1
-                        self.signals.progress.emit(completed, total)
-                        self.signals.finished.emit(
-                            result["filepath"],
-                            result["success"],
-                            result["result"],
-                            result["options"],
-                        )
-            except BrokenProcessPool as e:
-                error_msg = f"프로세스 풀 오류: {e}"
-                for pending in tasks[completed:]:
+                    completed += 1
+                    self.signals.progress.emit(completed, total)
                     self.signals.finished.emit(
-                        pending["filepath"],
-                        False,
-                        error_msg,
-                        {},
+                        result["filepath"],
+                        result["success"],
+                        result["result"],
+                        result["options"],
                     )
+
+        except (BrokenProcessPool, Exception):
+            # 멀티프로세싱 실패 시 순차 처리로 폴백
+            for task in tasks[completed:]:
+                if self._cancelled:
+                    break
+
+                result = _process_single_image(task)
+                completed += 1
+                self.signals.progress.emit(completed, total)
+                self.signals.finished.emit(
+                    result["filepath"],
+                    result["success"],
+                    result["result"],
+                    result["options"],
+                )
+
         finally:
-            # 항상 완료 시그널 발생
             self.signals.all_done.emit()
