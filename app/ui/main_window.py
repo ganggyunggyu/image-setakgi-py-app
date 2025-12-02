@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QApplication,
 )
-from PySide6.QtCore import Qt, Signal, QThreadPool, QRunnable, QObject
+from PySide6.QtCore import Qt, Signal, QThreadPool, QRunnable, QObject, QEvent
 from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent, QPixmap, QIcon
 from PIL import Image
 from pathlib import Path
@@ -24,7 +24,7 @@ from .options_panel import OptionsPanel
 from .log_widget import LogWidget
 from .workers import TransformWorker, WorkerSignals
 from .workers.batch_worker import BatchTransformWorker
-from .widgets import FileListWidget
+from .widgets import FileListWidget, BusyOverlay
 from app.core.preview import PreviewThread, pil_to_qpixmap, create_thumbnail, MAX_PREVIEW_SIZE
 from app.core.image_ops import apply_transforms
 from app.core.metadata import remove_exif
@@ -69,6 +69,7 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self._connect_signals()
         self._apply_styles()
+        self._center_panel.installEventFilter(self)
 
         # 자유변형 모드 초기화 (신호 연결 후 활성화)
         self._preview.set_free_transform_mode(True)
@@ -107,8 +108,8 @@ class MainWindow(QMainWindow):
 
         splitter.addWidget(left_panel)
 
-        center_panel = QWidget()
-        center_layout = QVBoxLayout(center_panel)
+        self._center_panel = QWidget()
+        center_layout = QVBoxLayout(self._center_panel)
 
         self._preview = PreviewWidget()
         center_layout.addWidget(self._preview)
@@ -116,7 +117,12 @@ class MainWindow(QMainWindow):
         self._log_widget = LogWidget()
         center_layout.addWidget(self._log_widget)
 
-        splitter.addWidget(center_panel)
+        self._overlay = BusyOverlay(self._center_panel)
+        self._overlay.setGeometry(self._center_panel.rect())
+        self._overlay.hide()
+        self._overlay.raise_()
+
+        splitter.addWidget(self._center_panel)
 
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
@@ -143,7 +149,7 @@ class MainWindow(QMainWindow):
         right_layout.addLayout(action_layout)
 
         random_layout = QHBoxLayout()
-        self._random_btn = QPushButton("🎲 랜덤 변환 실행")
+        self._random_btn = QPushButton("랜덤 변환 실행")
         self._random_btn.setStyleSheet(
             "background-color: #9c27b0; color: white; font-weight: bold; padding: 10px;"
         )
@@ -268,6 +274,7 @@ class MainWindow(QMainWindow):
         )
 
     def _finalize_processing(self, label: str):
+        self._overlay.hide_overlay()
         self._progress.setVisible(False)
         self._convert_btn.setEnabled(True)
         self._random_btn.setEnabled(True)
@@ -278,6 +285,11 @@ class MainWindow(QMainWindow):
             f"{label}: 성공 {self._completed}개, 실패 {len(self._failed)}개",
             "info",
         )
+
+    def eventFilter(self, obj, event):
+        if obj == self._center_panel and event.type() == QEvent.Resize:
+            self._overlay.setGeometry(self._center_panel.rect())
+        return super().eventFilter(obj, event)
 
     def _add_files(self, files: list[str]):
         # 기존 파일 모두 제거
@@ -494,6 +506,7 @@ class MainWindow(QMainWindow):
         self._convert_btn.setEnabled(False)
         self._random_btn.setEnabled(False)
         self._set_status_message("변환 중...", "#90caf9")
+        self._overlay.show_message("변환 중")
 
         self._completed = 0
         self._failed = []
@@ -563,7 +576,7 @@ class MainWindow(QMainWindow):
 
         self._random_mode = True
         self._log_widget.clear()
-        self._log_widget.add_log("🎲 랜덤 변환 시작", "info")
+        self._log_widget.add_log("랜덤 변환 시작", "info")
         self._log_widget.add_separator()
 
         self._progress.setVisible(True)
@@ -572,6 +585,7 @@ class MainWindow(QMainWindow):
         self._convert_btn.setEnabled(False)
         self._random_btn.setEnabled(False)
         self._set_status_message("랜덤 변형 중...", "#90caf9")
+        self._overlay.show_message("랜덤 변형 중")
 
         self._completed = 0
         self._failed = []
