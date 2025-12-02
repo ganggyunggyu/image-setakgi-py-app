@@ -219,7 +219,6 @@ def apply_transforms(
 
     if perspective_corners and len(perspective_corners) == 4:
         result = perspective_transform(result, perspective_corners)
-        orig_size = result.info.get("orig_size")
 
     if rotation != 0:
         result = rotate_and_crop(result, rotation)

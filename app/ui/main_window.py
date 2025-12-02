@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QThreadPool, QRunnable, QObject, QEvent
 from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent, QPixmap, QIcon
-from PIL import Image
+from PIL import Image, ImageOps
 from pathlib import Path
 from typing import Optional
 
@@ -138,11 +138,24 @@ class MainWindow(QMainWindow):
         self._status_label.setStyleSheet("color: #ffffff; font-weight: bold;")
         right_layout.addWidget(self._status_label)
 
+        action_layout = QHBoxLayout()
+        self._output_btn = QPushButton("출력 폴더 선택")
+        self._convert_btn = QPushButton("변환 실행")
+        self._convert_btn.setStyleSheet(
+            "background-color: #4285f4; color: white; font-weight: bold; padding: 10px;"
+        )
+        action_layout.addWidget(self._output_btn)
+        action_layout.addWidget(self._convert_btn)
+        right_layout.addLayout(action_layout)
+
         self._random_btn = QPushButton("랜덤 변환 실행")
         self._random_btn.setStyleSheet(
             "background-color: #9c27b0; color: white; font-weight: bold; padding: 10px;"
         )
         right_layout.addWidget(self._random_btn)
+
+        self._output_path_label = QLabel("출력 폴더: 미선택")
+        right_layout.addWidget(self._output_path_label)
 
         splitter.addWidget(right_panel)
 
@@ -165,6 +178,8 @@ class MainWindow(QMainWindow):
         self._options.perspective_offset_changed.connect(self._on_perspective_offset_changed)
         self._preview.perspective_changed.connect(self._on_perspective_changed)
 
+        self._output_btn.clicked.connect(self._select_output_folder)
+        self._convert_btn.clicked.connect(self._start_conversion)
         self._random_btn.clicked.connect(self._start_random_conversion)
 
     def _apply_styles(self):
@@ -364,7 +379,8 @@ class MainWindow(QMainWindow):
     def _load_image(self, filepath: str):
         try:
             self._loading_new_image = True
-            self._current_image = Image.open(filepath)
+            img = Image.open(filepath)
+            self._current_image = ImageOps.exif_transpose(img) if img else img
             w, h = self._current_image.size
 
             self._options.set_original_size(w, h)
@@ -592,6 +608,7 @@ class MainWindow(QMainWindow):
         for filepath in self._files:
             try:
                 img = Image.open(filepath)
+                img = ImageOps.exif_transpose(img) if img else img
                 orig_w, orig_h = img.size
                 img.close()
 
@@ -606,6 +623,8 @@ class MainWindow(QMainWindow):
                     include_perspective=True,
                     include_date=True,
                 )
+                random_options["thumb_w"] = thumb_w
+                random_options["thumb_h"] = thumb_h
 
                 worker = TransformWorker(filepath, random_options, output_manager)
                 worker.setAutoDelete(False)

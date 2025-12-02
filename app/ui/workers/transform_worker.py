@@ -39,9 +39,13 @@ class TransformWorker(QRunnable):
 
             perspective_corners: Optional[list] = None
             if self.options.get("perspective_corners"):
-                thumbnail = create_thumbnail(img, MAX_PREVIEW_SIZE)
-                thumb_w, thumb_h = thumbnail.size
                 orig_w, orig_h = img.size
+                thumb_w = self.options.get("thumb_w")
+                thumb_h = self.options.get("thumb_h")
+
+                if not thumb_w or not thumb_h:
+                    thumbnail = create_thumbnail(img, MAX_PREVIEW_SIZE)
+                    thumb_w, thumb_h = thumbnail.size
 
                 scale_x = orig_w / thumb_w
                 scale_y = orig_h / thumb_h
