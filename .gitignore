@@ -25,3 +25,7 @@ __pycache__/
 # App Config (local)
 .image_setakgi/
 .claude/
+
+
+
+/test_*/

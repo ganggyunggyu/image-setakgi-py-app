@@ -1,21 +1,22 @@
 # 코드 개선점 분석 보고서
 
-> 분석일: 2025-11-28
-> 이전 분석일: 2025-11-26
-> 분석 대상: Image Setakgi 전체 프로젝트
+> 분석일: 2025-12-01
+> 이전 분석일: 2025-11-28
+> 분석 대상: Image Setakgi 전체 프로젝트 (특히 `app/core/`)
 
 ## 요약
 
-- 🔴 Critical: 1건 (이전 3건 → 2건 해결됨)
-- 🟠 High: 4건 (이전 5건 → 1건 해결됨)
-- 🟡 Medium: 8건 (이전 7건 + 신규 1건)
-- 🟢 Low: 5건 (이전 4건 + 신규 1건)
+- 🔴 Critical: 1건
+- 🟠 High: 4건
+- 🟡 Medium: 8건
+- 🟢 Low: 4건 (이전 5건 → 1건 해결됨)
 
 ### 해결된 이슈
 
 - ✅ CRIT-001: transform_history.py JSON 예외 처리 추가됨
 - ✅ CRIT-002: preview.py QImage bytes_per_line 명시적 계산 추가됨
 - ✅ HIGH-004: CropWidget의 _on_reset()이 public reset() 메서드로 사용됨
+- ✅ LOW-004: image_ops.py 미사용 import(`io`, `ImageFilter`) 제거됨
 
 ---
 
@@ -100,9 +101,41 @@ if self._preview_thread and self._preview_thread.isRunning():
 
 ---
 
-### [HIGH-002] bare except 사용
+### [HIGH-002] read_exif 파일 핸들 누수 가능성
 
-**위치**: [metadata.py:53](app/core/metadata.py#L53)
+**위치**: [metadata.py:37-38](app/core/metadata.py#L37-L38)
+
+**문제**:
+`Image.open()`을 `with` 문 없이 사용하여 파일 핸들이 닫히지 않을 수 있음
+
+**현재 코드**:
+```python
+def read_exif(filepath: str) -> dict:
+    try:
+        img = Image.open(filepath)  # with 문 없음
+        if "exif" not in img.info:
+            return {"_raw": None, "_error": None}
+```
+
+**영향**:
+- 대량 파일 처리 시 파일 핸들 누수
+- Windows에서 파일 잠금 문제 발생 가능
+
+**해결 방안**:
+```python
+def read_exif(filepath: str) -> dict:
+    try:
+        with Image.open(filepath) as img:
+            if "exif" not in img.info:
+                return {"_raw": None, "_error": None}
+            # ... 나머지 로직
+```
+
+---
+
+### [HIGH-003] bare except 사용
+
+**위치**: [metadata.py:52](app/core/metadata.py#L52)
 
 **문제**:
 `except:` 는 `SystemExit`, `KeyboardInterrupt` 등 모든 예외를 잡아버려 예상치 못한 동작 발생
@@ -450,25 +483,17 @@ QMainWindow { ... }
 
 ---
 
-### [LOW-004] 미사용 import
+### [LOW-004] random_transform.py 미사용 import
 
-**위치**: [image_ops.py:5](app/core/image_ops.py#L5)
+**위치**: [random_transform.py:5](app/core/random_transform.py#L5)
 
 **문제**:
-- `io` 모듈 미사용
-- `List`, `Tuple` → 리터럴 타입 힌트 사용 가능 (Python 3.9+)
+`Optional`이 import되었으나 사용되지 않음
 
 **해결 방안**:
-미사용 import 제거:
 ```python
 # 제거
-import io
-
-# 변경 전
-from typing import Optional, List, Tuple
-
-# 변경 후
-from typing import Optional
+from typing import Optional  # ← 삭제
 ```
 
 ---
@@ -517,7 +542,7 @@ PERSPECTIVE_RANGE = 6.0 # float
 1. [ ] LOW-001: 타입 힌트 일관성
 2. [ ] LOW-002: 네이밍 컨벤션 통일
 3. [ ] LOW-003: 스타일시트 분리
-4. [ ] LOW-004: 미사용 import 정리
+4. [ ] LOW-004: random_transform.py 미사용 import 정리
 5. [ ] LOW-005: random_config 타입 수정
 
 ---
@@ -529,6 +554,15 @@ PERSPECTIVE_RANGE = 6.0 # float
 1. **transform_history.py**: JSON 로드 시 예외 처리 추가됨
 2. **preview.py**: QImage 생성 시 bytes_per_line 명시적 계산
 3. **options_panel.py**: 모듈 분리로 코드 구조 개선
+4. **image_ops.py**: 미사용 import(`io`, `ImageFilter`) 제거됨 ✨ (2025-12-01)
+5. **perspective_transform**: 투명 배경 + 포맷별 저장 처리 개선 ✨ (2025-12-01)
+6. **crop_transparent**: 내접 직사각형 알고리즘으로 투명 모서리 완전 제거 ✨ (2025-12-02)
+   - 평행사변형 내부 최대 면적 직사각형 찾기 (O(n²) 알고리즘)
+   - 원근 변형/회전 후 검정/흰색 빈 공간 제거
+7. **save_output.py**: RGBA→RGB 변환 시 흰색 배경 사용 ✨ (2025-12-02)
+   - 블로그 업로드 시 자연스러운 배경색
+8. **perspective_transform**: `orig_size` 저장 제거 ✨ (2025-12-02)
+   - 내접 직사각형 크롭이 크기 조절하므로 리사이즈 불필요
 
 ### 추가 권장 사항
 
@@ -536,3 +570,55 @@ PERSPECTIVE_RANGE = 6.0 # float
 2. **로깅 시스템 도입**: 에러 추적을 위한 로깅 추가
 3. **설정 검증**: 설정값 로드 시 스키마 검증 추가 고려
 4. **상수 파일 통합**: `constants.py`로 하드코딩된 값들 중앙 관리
+
+---
+
+## 성능 벤치마크 보고서
+
+> 측정일: 2025-12-02
+> 테스트 환경: macOS Darwin 24.6.0, Apple Silicon (10 CPU cores)
+
+### 테스트 조건
+
+- **이미지 수**: 18장
+- **총 메가픽셀**: 366.8MP
+- **이미지 크기**: 4284x5712 (12장), 3024x4032 (6장)
+- **적용 변형**: 랜덤 변형 (crop, rotation, noise, brightness, perspective)
+
+### 단계별 처리 시간 (24.5MP 이미지 기준)
+
+| 단계 | 시간 | 비율 |
+|------|------|------|
+| perspective_transform | 1.14초 | 51% |
+| rotate_and_crop | 0.96초 | 43% |
+| crop_transparent | 0.07초 | 3% |
+| adjust_brightness | 0.09초 | 4% |
+| RGBA→RGB | 0.04초 | 2% |
+| JPEG 저장 | 0.04초 | 2% |
+
+**병목**: OpenCV의 warpPerspective/rotate 연산 (전체의 94%)
+
+### 순차 vs 병렬 처리 비교
+
+| 방식 | 총 시간 | 평균 시간/장 | 처리량 |
+|------|---------|-------------|--------|
+| 순차 처리 | 39.81초 | 2.21초 | 0.45장/초 |
+| 병렬 처리 (10 workers) | 12.06초 | 0.67초 | 1.49장/초 |
+
+### 성능 향상
+
+- **속도 향상**: 3.3x
+- **시간 절약**: 27.8초 (70%)
+
+### 최적화 권장사항
+
+1. **멀티프로세싱 적용**: `multiprocessing.Pool`로 병렬 처리 (구현됨: `benchmark.py`)
+2. **이미지 리사이징**: 변형 전 축소 → 변형 → 확대 (품질 손실 있음)
+3. **GPU 가속**: OpenCV CUDA 빌드 사용 (설정 복잡)
+
+### 벤치마크 실행 방법
+
+```bash
+source venv/bin/activate
+python benchmark.py
+```
