@@ -3,7 +3,7 @@
 ProcessPoolExecutor를 사용해 이미지 처리를 병렬화
 """
 from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed, BrokenProcessPool
 import multiprocessing as mp
 
 from PySide6.QtCore import QObject, QThread, Signal
@@ -150,36 +150,47 @@ class BatchTransformWorker(QThread):
             total = len(tasks)
             completed = 0
 
-            with ProcessPoolExecutor(
-                max_workers=self.max_workers,
-                initializer=_init_worker,
-            ) as executor:
-                futures = {executor.submit(_process_single_image, t): t for t in tasks}
+            ctx = mp.get_context("spawn")
+            try:
+                with ProcessPoolExecutor(
+                    max_workers=self.max_workers,
+                    initializer=_init_worker,
+                    mp_context=ctx,
+                ) as executor:
+                    futures = {executor.submit(_process_single_image, t): t for t in tasks}
 
-                for future in as_completed(futures):
-                    if self._cancelled:
-                        executor.shutdown(wait=False, cancel_futures=True)
-                        break
+                    for future in as_completed(futures):
+                        if self._cancelled:
+                            executor.shutdown(wait=False, cancel_futures=True)
+                            break
 
-                    try:
-                        result = future.result()
-                    except Exception as e:
-                        # 개별 작업 실패 처리
-                        task = futures[future]
-                        result = {
-                            "filepath": task["filepath"],
-                            "success": False,
-                            "result": str(e),
-                            "options": {},
-                        }
+                        try:
+                            result = future.result()
+                        except Exception as e:
+                            task = futures[future]
+                            result = {
+                                "filepath": task["filepath"],
+                                "success": False,
+                                "result": str(e),
+                                "options": {},
+                            }
 
-                    completed += 1
-                    self.signals.progress.emit(completed, total)
+                        completed += 1
+                        self.signals.progress.emit(completed, total)
+                        self.signals.finished.emit(
+                            result["filepath"],
+                            result["success"],
+                            result["result"],
+                            result["options"],
+                        )
+            except BrokenProcessPool as e:
+                error_msg = f"프로세스 풀 오류: {e}"
+                for pending in tasks[completed:]:
                     self.signals.finished.emit(
-                        result["filepath"],
-                        result["success"],
-                        result["result"],
-                        result["options"],
+                        pending["filepath"],
+                        False,
+                        error_msg,
+                        {},
                     )
         finally:
             # 항상 완료 시그널 발생
