@@ -168,6 +168,86 @@ pyinstaller --noconfirm --windowed --onefile ^
 
 ---
 
+## GitHub Actions 자동 빌드
+
+macOS에서 Windows exe 파일을 빌드하거나, 그 반대의 경우 GitHub Actions를 활용하면 편리하다.
+
+### 워크플로우 개요
+
+| 파일 | 설명 |
+|------|------|
+| `.github/workflows/build.yml` | Windows + macOS 동시 빌드 및 릴리즈 자동화 |
+
+### 트리거 조건
+
+| 트리거 | 동작 |
+|--------|------|
+| `v*` 태그 푸시 (예: `v1.0.0`) | Windows + macOS 빌드 → GitHub Release 자동 생성 |
+| 수동 실행 (workflow_dispatch) | 빌드만 수행 (Artifacts 다운로드 가능) |
+| 수동 실행 + `create_release` 체크 | 빌드 + Release 생성 |
+
+### 빌드 결과물
+
+| 플랫폼 | 파일명 | 설명 |
+|--------|--------|------|
+| Windows | `ImageSetakgi-Windows.exe` | 독립 실행 파일 |
+| macOS | `ImageSetakgi-macOS` | 독립 실행 파일 |
+
+### 사용법
+
+#### 1. 릴리즈 생성 (태그 푸시)
+
+```bash
+# 변경사항 커밋
+git add .
+git commit -m "release: v1.0.0"
+git push
+
+# 태그 생성 및 푸시 → 자동 빌드 + 릴리즈
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+태그가 푸시되면:
+1. Windows와 macOS에서 동시에 빌드 시작
+2. 빌드 완료 후 GitHub Release 자동 생성
+3. 실행 파일이 Release에 첨부됨
+
+#### 2. 수동 빌드 (테스트용)
+
+1. GitHub 저장소 → **Actions** 탭
+2. 왼쪽 메뉴에서 **Build & Release** 선택
+3. **Run workflow** 버튼 클릭
+4. (선택) `릴리즈 생성 여부` 체크
+5. **Run workflow** 클릭
+
+#### 3. Artifacts 다운로드
+
+빌드가 완료되면:
+1. **Actions** 탭 → 해당 워크플로우 실행 클릭
+2. 하단 **Artifacts** 섹션에서 다운로드
+   - `ImageSetakgi-Windows.exe`
+   - `ImageSetakgi-macOS`
+
+### 버전 태그 네이밍 규칙
+
+| 태그 형식 | 릴리즈 타입 | 예시 |
+|-----------|-------------|------|
+| `v1.0.0` | 정식 릴리즈 | `v1.0.0`, `v2.1.3` |
+| `v1.0.0-beta` | 프리릴리즈 (베타) | `v1.0.0-beta`, `v2.0.0-beta.1` |
+| `v1.0.0-alpha` | 프리릴리즈 (알파) | `v1.0.0-alpha` |
+
+`beta` 또는 `alpha`가 포함된 태그는 자동으로 **Pre-release**로 표시됨.
+
+### 주의사항
+
+- GitHub Actions 무료 사용량: 월 2,000분 (public repo는 무제한)
+- Windows 빌드: 약 3~5분 소요
+- macOS 빌드: 약 3~5분 소요
+- 빌드 실패 시 Actions 탭에서 로그 확인 가능
+
+---
+
 ## 폴더 구조
 
 ```
